@@ -11,7 +11,9 @@ public enum ContactMode {
     I_INITIATE("연락중", "유저가 보내면 답은 온다"),
     READ_NO_REPLY("읽씹", "유저가 보내는데 읽고 답이 없다"),
     NONE("무연락", "연락이 아예 없다"),
-    BLOCKED("차단", "차단당했다");
+    BLOCKED("차단", "차단당했다"),
+    UNKNOWN(null, "잘 모르겠다"),
+    OTHER(null, "기타");
 
     private final String contactState;
     private final String label;

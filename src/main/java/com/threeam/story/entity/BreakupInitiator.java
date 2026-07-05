@@ -10,7 +10,8 @@ public enum BreakupInitiator {
     PARTNER("상대", "상대가 먼저 원했다"),
     SELF("나", "유저가 먼저 원했다"),
     PUSHED("나떠밀림", "말은 유저가 꺼냈지만 상대가 그렇게 만들었다"),
-    UNKNOWN("미상", "유저도 모르겠다고 함");
+    UNKNOWN("미상", "유저도 모르겠다고 함"),
+    OTHER(null, "기타");
 
     private final String dumper;
     private final String label;

@@ -9,7 +9,9 @@ public enum PreBreakupChange {
     FIGHTS_INCREASED("몇 주 전부터 싸움이 늘었다"),
     GRADUAL_COOLING("몇 달에 걸쳐 서서히 식었다"),
     REPEATED_WARNINGS("상대가 전부터 여러 번 힘들다고 말했다"),
-    SINGLE_INCIDENT("잘 지내다 사건 하나로");
+    SINGLE_INCIDENT("잘 지내다 사건 하나로"),
+    UNSURE("잘 모르겠다"),
+    OTHER("기타");
 
     private final String label;
 

@@ -5,7 +5,8 @@ package com.threeam.story.entity;
 public enum PartnerNewRelation {
     CONFIRMED("있는 것을 확인함"),
     DENIED("없는 것을 확인함"),
-    UNKNOWN("유저가 모름");
+    UNKNOWN("유저가 모름"),
+    OTHER("기타");
 
     private final String label;
 
@@ -22,7 +23,7 @@ public enum PartnerNewRelation {
         return switch (this) {
             case CONFIRMED -> Boolean.TRUE;
             case DENIED -> Boolean.FALSE;
-            case UNKNOWN -> null;
+            case UNKNOWN, OTHER -> null;
         };
     }
 }

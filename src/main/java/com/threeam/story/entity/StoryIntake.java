@@ -10,7 +10,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -40,10 +42,11 @@ public class StoryIntake {
     @Column(nullable = false, unique = true)
     private Long storyId;
 
-    // 상담자가 유저를 부르는 이름. 폼에서 유일한 필수 칸이다 — 이게 없으면 상담자가 대조
-    // 문장에서 주어를 통째로 빠뜨린다("여자친구는 A였던 반면, 입장에서는 B"). 실명일 필요는
-    // 없다(가명, 별명 가능). 신원 확인이 아니라 부르려고 받는 값이라 수집 최소화와 안 부딪힌다.
-    @Column(nullable = false, length = 8)
+    // 상담자가 유저를 부르는 이름. 실명일 필요는 없다(가명, 별명 가능). 신원 확인이 아니라
+    // 부르려고 받는 값이라 수집 최소화와 안 부딪힌다.
+    // 다른 칸과 같이 비워둘 수 있다 — 문진은 전부 건너뛸 수 있는 화면이라 이것만 필수로 걸면
+    // 이름을 안 적은 사람의 나머지 답이 통째로 버려진다. 없으면 상담자는 이름 없이 부른다.
+    @Column(length = 8)
     private String callName;
 
     private Integer userAge;
@@ -86,12 +89,54 @@ public class StoryIntake {
     @Column(length = 30)
     private PreBreakupChange preBreakupChange;
 
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private ClingReaction clingReaction;
+
+    // 아래 넷은 앞 답에 따라 묻는 가지다(재회 경험이 있을 때, 차단이나 읽씹일 때, 유저가 먼저
+    // 끝냈을 때, 새 사람을 확인했을 때). 조건이 안 맞으면 화면이 안 물으니 null이 정상이다.
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private RepeatBreakupPattern repeatBreakupPattern;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private RepeatSeverity repeatSeverity;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private PriorReunionPath priorReunionPath;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private LastActionBeforeCut lastActionBeforeCut;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private SelfEndReason selfEndReason;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private NewRelationOverlap newRelationOverlap;
+
     // 다중 선택은 이름을 쉼표로 이어 한 칸에 둔다. 쿼리로 찾을 일이 없어 테이블을 쪼갤 이유가 없다.
     @Column(length = 150)
     private String partnerActions;
 
     @Column(length = 150)
     private String contactPoints;
+
+    // "기타"를 고른 칸의 직접 입력. 칸 이름과 글을 한 줄씩 붙여 한 칸에 둔다 — 질문마다
+    // 컬럼을 파면 보기가 늘 때마다 스키마가 따라 움직인다. 쿼리로 찾을 일이 없다.
+    @Column(columnDefinition = "TEXT")
+    private String otherAnswers;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
@@ -103,10 +148,13 @@ public class StoryIntake {
                         Integer datingMonths, Integer daysSinceBreakup, BreakupInitiator initiator,
                         ContactMode contactMode, PriorReunion priorReunion,
                         PartnerNewRelation partnerHasNew, PreBreakupChange preBreakupChange,
-                        List<PartnerAction> partnerActions, List<ContactPoint> contactPoints) {
+                        Branches branches,
+                        List<PartnerAction> partnerActions, List<ContactPoint> contactPoints,
+                        Map<String, String> otherAnswers) {
         this.storyId = storyId;
         apply(callName, userAge, partnerAge, userGender, datingMonths, daysSinceBreakup, initiator,
-                contactMode, priorReunion, partnerHasNew, preBreakupChange, partnerActions, contactPoints);
+                contactMode, priorReunion, partnerHasNew, preBreakupChange, branches, partnerActions,
+                contactPoints, otherAnswers);
     }
 
     // 유저가 폼을 다시 열어 고칠 수 있게 통째로 갈아끼운다. 부분 수정을 받지 않는 이유는
@@ -115,19 +163,24 @@ public class StoryIntake {
                        Integer datingMonths, Integer daysSinceBreakup, BreakupInitiator initiator,
                        ContactMode contactMode, PriorReunion priorReunion,
                        PartnerNewRelation partnerHasNew, PreBreakupChange preBreakupChange,
-                       List<PartnerAction> partnerActions, List<ContactPoint> contactPoints) {
+                       Branches branches,
+                       List<PartnerAction> partnerActions, List<ContactPoint> contactPoints,
+                       Map<String, String> otherAnswers) {
         apply(callName, userAge, partnerAge, userGender, datingMonths, daysSinceBreakup, initiator,
-                contactMode, priorReunion, partnerHasNew, preBreakupChange, partnerActions, contactPoints);
+                contactMode, priorReunion, partnerHasNew, preBreakupChange, branches, partnerActions,
+                contactPoints, otherAnswers);
     }
 
     private void apply(String callName, Integer userAge, Integer partnerAge, IntakeGender userGender,
                        Integer datingMonths, Integer daysSinceBreakup, BreakupInitiator initiator,
                        ContactMode contactMode, PriorReunion priorReunion,
                        PartnerNewRelation partnerHasNew, PreBreakupChange preBreakupChange,
-                       List<PartnerAction> partnerActions, List<ContactPoint> contactPoints) {
+                       Branches branches,
+                       List<PartnerAction> partnerActions, List<ContactPoint> contactPoints,
+                       Map<String, String> otherAnswers) {
         // 앞뒤 공백은 여기서 한 번만 턴다 — 호칭은 말풍선에 그대로 박히는 값이라
         // " 지호 "가 저장되면 "지호 님은"처럼 벌어진다.
-        this.callName = callName == null ? null : callName.trim();
+        this.callName = callName == null || callName.isBlank() ? null : callName.trim();
         this.userAge = userAge;
         this.partnerAge = partnerAge;
         this.userGender = userGender;
@@ -138,8 +191,54 @@ public class StoryIntake {
         this.priorReunion = priorReunion;
         this.partnerHasNew = partnerHasNew;
         this.preBreakupChange = preBreakupChange;
+        Branches b = branches == null ? Branches.NONE : branches;
+        this.clingReaction = b.clingReaction();
+        this.repeatBreakupPattern = b.repeatBreakupPattern();
+        this.repeatSeverity = b.repeatSeverity();
+        this.priorReunionPath = b.priorReunionPath();
+        this.lastActionBeforeCut = b.lastActionBeforeCut();
+        this.selfEndReason = b.selfEndReason();
+        this.newRelationOverlap = b.newRelationOverlap();
         this.partnerActions = join(partnerActions);
         this.contactPoints = join(contactPoints);
+        this.otherAnswers = joinOthers(otherAnswers);
+    }
+
+    // 칸 이름과 글 사이는 탭, 항목 사이는 줄바꿈. 글 안의 줄바꿈은 공백으로 접는다.
+    public Map<String, String> otherAnswerMap() {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (otherAnswers == null || otherAnswers.isBlank()) {
+            return map;
+        }
+        for (String row : otherAnswers.split("\n")) {
+            int cut = row.indexOf('\t');
+            if (cut > 0 && cut < row.length() - 1) {
+                map.put(row.substring(0, cut), row.substring(cut + 1));
+            }
+        }
+        return map;
+    }
+
+    private static String joinOthers(Map<String, String> answers) {
+        if (answers == null || answers.isEmpty()) {
+            return null;
+        }
+        List<String> rows = new ArrayList<>();
+        answers.forEach((field, text) -> {
+            if (field != null && text != null && !text.isBlank()) {
+                rows.add(field + "\t" + text.replaceAll("\\s+", " ").trim());
+            }
+        });
+        return rows.isEmpty() ? null : String.join("\n", rows);
+    }
+
+    // 붙잡은 반응과 가지 셋을 한 묶음으로 넘긴다 — 생성자와 update가 열여덟 개 인자를
+    // 나란히 받으면 enum 자리를 바꿔 끼워도 컴파일이 통과한다.
+    public record Branches(ClingReaction clingReaction, RepeatBreakupPattern repeatBreakupPattern,
+                           RepeatSeverity repeatSeverity, PriorReunionPath priorReunionPath,
+                           LastActionBeforeCut lastActionBeforeCut, SelfEndReason selfEndReason,
+                           NewRelationOverlap newRelationOverlap) {
+        public static final Branches NONE = new Branches(null, null, null, null, null, null, null);
     }
 
     public List<PartnerAction> partnerActionList() {

@@ -6,7 +6,9 @@ package com.threeam.story.entity;
 public enum PriorReunion {
     NONE("이번이 처음"),
     ONCE("헤어졌다 다시 만난 적 한 번"),
-    MANY("헤어졌다 다시 만난 적 두 번 이상");
+    MANY("헤어졌다 다시 만난 적 두 번 이상"),
+    UNSURE("잘 모르겠다"),
+    OTHER("기타");
 
     private final String label;
 
@@ -18,7 +20,12 @@ public enum PriorReunion {
         return label;
     }
 
-    public boolean repeated() {
-        return this != NONE;
+    // 모름과 기타는 프로필에 안 싣는다(null이 곧 미상). 모름을 false로 접으면 반복 아님이 된다.
+    public Boolean repeated() {
+        return switch (this) {
+            case NONE -> Boolean.FALSE;
+            case ONCE, MANY -> Boolean.TRUE;
+            case UNSURE, OTHER -> null;
+        };
     }
 }

@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { PhoneFrame } from '../components/PhoneFrame';
 import { BusinessInfo } from '../components/BusinessInfo';
 import { SocialLogin } from '../components/SocialLogin';
 import {
   EMPTY_DRAFT,
-  INTAKE_STEPS,
   IntakeWizard,
   draftToIntake,
   hasAnyAnswer,
+  intakeSteps,
+  recapLines,
   type IntakeDraft,
 } from '../components/IntakeWizard';
 import { guestStart } from '../api/auth';
@@ -17,6 +18,7 @@ import { createStory } from '../api/story';
 import { putIntake } from '../api/intake';
 import { extractErrorMessage } from '../api/client';
 import styles from './IntroPage.module.css';
+import { BRAND } from '../brand';
 
 // 첫 화면이 로그인 폼이면 이게 뭐 하는 서비스인지 전달이 하나도 안 된다. 이별 서비스는
 // 충동적으로 들어오는데 폼이 뜨면 그 자리에서 나간다. 그래서 첫 화면을 대화 시작점으로 둔다.
@@ -25,8 +27,34 @@ import styles from './IntroPage.module.css';
 // 실제로 말을 걸었을 때, 즉 첫 전송 시점에 만든다. 질문 단계의 답도 그때까지 화면이 들고
 // 있다가 한 번에 보낸다(위저드를 앞에 세운 덕에 크롤러는 오히려 더 못 들어온다).
 //
-// 화면은 한 자리에서 단계만 바뀐다: 0 소개, 1~4 질문, 5 사연 쓰기.
-const PHASE_STORY = INTAKE_STEPS + 1;
+// 화면은 한 자리에서 단계만 바뀐다: 0 첫 화면, 1~N 질문, N+1 되짚기, 그 뒤가 사연 쓰기.
+// N은 답에 따라 늘고 준다(가지 질문) — 그래서 단계 번호를 상수로 박지 않고 질문 목록
+// 길이로 판정한다. 첫 화면에 적는 개수는 가지 없는 기본 길이다.
+//
+// 첫 화면은 게임 오프닝의 문법을 빌린다: 검은 바탕에 문장 하나, 답하면 다음. 캐릭터도
+// 말풍선도 없이 화면 전체가 말을 건다. 다만 문장은 "이야기를 들어드린다"가 아니라
+// "상황을 넣으면 판정과 할 일이 나온다"여야 한다 — 결제 심사가 이 화면만 보고 상담 대행이
+// 아니라 리포트를 내는 소프트웨어로 읽어야 하고, 실제로 그 문구 때문에 세 번 반려됐다.
+// 훅 문장은 임시다. 문구는 따로 확정한다.
+const BASE_STEPS = intakeSteps(EMPTY_DRAFT).length;
+const HOOK = '보내려던 그 메시지,\n판을 읽고 보내도 늦지 않습니다';
+const HOOK_WHY =
+  '이별까지의 상황을 넣으면 소프트웨어가 되는 판인지, 무엇 때문인지, 지금 할 일이 무엇인지를 리포트로 냅니다. 안 되는 판이면 안 된다고도 말합니다.';
+
+// 되짚기 화면의 한 줄. 판을 가르는 답 하나를 골라 그 뜻을 말한다 — 약속이 아니라 이 답이
+// 무엇을 바꾸는지다. 문구는 임시.
+function transitionHook(draft: IntakeDraft): string {
+  if (draft.priorReunion === 'MANY' && draft.repeatBreakupPattern === 'SAME_ISSUE') {
+    return '같은 문제로 두 번 이상 끊긴 판입니다. 연락이 닿는지보다 왜 같은 자리에서 어긋나는지가 먼저입니다.';
+  }
+  if (draft.contactMode === 'BLOCKED') {
+    return '차단은 끝이 아니라 멈춤입니다. 끊기기 직전에 무엇이 있었는지가 이 판을 가릅니다.';
+  }
+  if (draft.clingReaction === 'CLUNG_WAVERED') {
+    return '매달렸을 때 흔들린 상대입니다. 그 흔들림이 무엇이었는지가 판의 핵심입니다.';
+  }
+  return '여기까지가 판의 뼈대입니다. 살은 이야기가 채웁니다.';
+}
 
 export function IntroPage() {
   const navigate = useNavigate();
@@ -40,6 +68,8 @@ export function IntroPage() {
   // 누른 사람이 이전 질문이 아니라 사이트 밖으로 나간다. 라우터를 거쳐 밀어야 라우터가 쥐고
   // 있는 히스토리 인덱스와 어긋나지 않는다(직접 pushState하면 그게 덮인다).
   const phase = (location.state as { introPhase?: number } | null)?.introPhase ?? 0;
+  const steps = intakeSteps(draft);
+  const PHASE_RECAP = steps.length + 1;
   const goPhase = (next: number) => navigate('.', { state: { introPhase: next } });
   // 이전은 새 칸을 밀지 않고 되감는다 — 밀면 뒤로가기가 지나온 자리를 다시 밟아 맴돈다.
   const goBack = () => navigate(-1);
@@ -78,32 +108,23 @@ export function IntroPage() {
             캐릭터는 '이야기 시작하기' 뒤 대화방에서 그대로 만난다 */}
         {phase === 0 && (
           <>
-            <div className={styles.intro}>
-              <div className={styles.logo}>3am</div>
-              <h1 className={styles.headline}>지난 연애를 정리하는 분석 리포트</h1>
-              <p className={styles.lead}>
-                이별까지의 상황을 적으면, 이별의 유형과 무엇이 작용했는지를 정리해 글로
-                돌려드립니다.
-              </p>
-              <ul className={styles.points}>
-                <li>이별의 유형과 유리하게, 불리하게 작용한 요인</li>
-                <li>비슷한 상황의 익명 사례</li>
-                <li>이어서 상황을 정리해 나가는 대화</li>
-              </ul>
+            <div className={styles.logo}>{BRAND}</div>
+            <div className={styles.hookWrap}>
+              <div className={styles.mark} />
+              <h1 className={styles.hook}>{HOOK}</h1>
+              <p className={styles.hookWhy}>{HOOK_WHY}</p>
+              <button className={styles.cta} onClick={() => goPhase(1)}>
+                시작하기
+              </button>
+              <div className={styles.composerLabel}>짧은 질문 {BASE_STEPS}개 정도입니다</div>
             </div>
 
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.startBlock}>
-              <div className={styles.composerLabel}>
-                짧은 질문 {INTAKE_STEPS}개에 답하시면 그만큼 덜 여쭙고 이야기로 들어갑니다
-              </div>
-              <button className={styles.send} onClick={() => goPhase(1)}>
-                시작하기
-              </button>
               {/* 질문을 다 넘겨야 쓸 칸이 나오면, 당장 쏟아내려고 들어온 사람은 그 전에 나간다.
                   탈출구를 열어둔다 — 안 물어서 잃는 것보다 말도 못 하고 나가는 게 크다 */}
-              <button className={styles.skipAsk} onClick={() => goPhase(PHASE_STORY)}>
+              <button className={styles.skipAsk} onClick={() => goPhase(PHASE_RECAP + 1)}>
                 바로 이야기부터 할게요
               </button>
             </div>
@@ -153,7 +174,7 @@ export function IntroPage() {
           </>
         )}
 
-        {phase >= 1 && phase <= INTAKE_STEPS && (
+        {phase >= 1 && phase <= steps.length && (
           <IntakeWizard
             step={phase - 1}
             draft={draft}
@@ -163,7 +184,37 @@ export function IntroPage() {
           />
         )}
 
-        {phase === PHASE_STORY && (
+        {phase === PHASE_RECAP && (
+          <div className={styles.recapWrap}>
+            <div className={styles.mark} />
+            <h1 className={styles.hook}>
+              {recapLines(draft).length ? '판이 잡혔습니다' : '이제 이야기를 들을 차례입니다'}
+            </h1>
+            {recapLines(draft).length > 0 && (
+              <dl className={styles.recap}>
+                {recapLines(draft).map(([k, v]) => (
+                  <Fragment key={k}>
+                    <dt>{k}</dt>
+                    <dd>{v}</dd>
+                  </Fragment>
+                ))}
+              </dl>
+            )}
+            <p className={styles.hookWhy}>
+              {transitionHook(draft)} 이제 무슨 일이 있었는지 들려주세요.
+            </p>
+            <button className={styles.cta} onClick={() => goPhase(PHASE_RECAP + 1)}>
+              이야기 시작하기
+            </button>
+            <div className={styles.recapFoot}>
+              <button className={styles.skipAsk} onClick={goBack}>
+                이전
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase > PHASE_RECAP && (
           <>
             {error && <div className={styles.error}>{error}</div>}
             <div className={styles.composer}>

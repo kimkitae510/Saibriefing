@@ -1,70 +1,96 @@
-/* 홈 안에서만 쓰는 한 장짜리 질문 화면. 프레임을 꽉 채우고, 답할 것 하나만 남긴다 */
+/* 홈 안에서만 쓰는 한 장짜리 질문 화면. 검은 바탕 한가운데 질문 하나만 놓고, 보기는
+   상자 없이 문장으로 세운다 — 상자가 사라지는 순간 폼이 아니라 말을 건 것이 된다.
+   폰트와 간격은 아직 임시다. 구조(가운데, 상자 없음, 즉시 넘어감)만 확정이다 */
 .wrap {
   flex: 1;
   width: 100%;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  position: relative;
+  padding: 36px 0 56px;
 }
 
-/* 몇 개 남았는지 안 보이면 채팅 드립과 같아진다 — 끝이 안 보이는 질문은 폼보다 나쁘다 */
+/* 남은 수는 구석에 작게. 대화 중에 크게 보이면 다시 폼이 된다 */
 .count {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   color: var(--text-muted);
-  font-size: 13px;
-  letter-spacing: 0.04em;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+}
+
+/* 말하는 쪽의 표시. 보라는 이 선과 고른 답, 두 군데에만 쓴다 */
+.mark {
+  width: 22px;
+  height: 1px;
+  background: var(--accent);
+  margin: 0 auto 24px;
 }
 
 .ask {
-  margin: 10px 0 0;
+  margin: 0;
   color: var(--text);
-  font-size: 21px;
-  font-weight: 700;
-  line-height: 1.4;
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: -0.2px;
+  text-wrap: balance;
+  word-break: keep-all;
+}
+
+/* 왜 묻는지. 읽는 사람만 읽는다 */
+.why {
+  margin: 12px auto 0;
+  max-width: 26em;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.65;
+  word-break: keep-all;
 }
 
 .body {
   width: 100%;
-  margin-top: 26px;
+  margin-top: 36px;
   display: flex;
-  gap: 10px;
+  justify-content: center;
+  gap: 22px;
 }
 
+/* 숫자 칸은 밑줄 하나. 상자를 없애는 규칙은 입력칸에도 적용된다 */
 .numberBox {
-  flex: 1;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
-  padding: 0 14px;
-  height: 54px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
-}
-
-.numberBox:focus-within {
-  border-color: var(--accent);
+  padding: 0 2px;
 }
 
 .numberLabel {
   color: var(--text-muted);
-  font-size: 14px;
-  flex-shrink: 0;
+  font-size: 13px;
 }
 
 .number {
-  width: 100%;
-  min-width: 0;
+  width: 72px;
   border: none;
+  border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text);
-  /* iOS는 16px 미만이면 탭할 때 화면을 확대한다 — 그 뒤로 레이아웃이 어긋난 채로 남는다 */
-  font-size: 16px;
+  font-size: 20px;
   font-family: inherit;
-  text-align: right;
+  text-align: center;
+  padding: 6px 0;
   outline: none;
 }
 
-/* 스핀 버튼은 폭만 먹고 손가락으로는 못 누른다 */
+.number:focus {
+  border-bottom-color: var(--accent);
+}
+
 .number::-webkit-outer-spin-button,
 .number::-webkit-inner-spin-button {
   -webkit-appearance: none;
@@ -78,65 +104,129 @@
 
 .unit {
   color: var(--text-muted);
-  font-size: 14px;
-  flex-shrink: 0;
+  font-size: 13px;
 }
 
+.textBox {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.text {
+  width: 220px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 19px;
+  font-family: inherit;
+  text-align: center;
+  padding: 6px 0;
+  outline: none;
+}
+
+.text:focus {
+  border-bottom-color: var(--accent);
+}
+
+.text::placeholder {
+  color: var(--text-muted);
+}
+
+/* 성별처럼 보기가 둘인 것은 가로로 나란히 */
 .options {
   display: flex;
-  gap: 10px;
-  width: 100%;
+  justify-content: center;
+  gap: 40px;
 }
 
 .option {
-  flex: 1;
-  height: 54px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
+  border: none;
+  background: transparent;
+  padding: 10px 4px;
   color: var(--text-sub);
-  font-size: 15px;
+  font-size: 17px;
   font-family: inherit;
   cursor: pointer;
+  transition: color 0.2s ease;
 }
 
 .optionOn {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 700;
+  color: var(--accent);
+}
+
+/* 셋 이상은 세로 문장 목록. 줄 높이 48은 손가락 기준이다 — 상자가 없으니 높이가 곧 표적이다 */
+.list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.listOption {
+  min-height: 48px;
+  border: none;
+  background: transparent;
+  padding: 10px 8px;
+  color: var(--text-sub);
+  font-size: 16px;
+  line-height: 1.4;
+  font-family: inherit;
+  text-align: center;
+  word-break: keep-all;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.listOption:hover {
+  color: var(--text);
+}
+
+/* 보기가 많거나 문장이 길면 가운데 정렬이 읽기 나쁘다 — 그때만 왼쪽에 붙인다 */
+.listLeft .listOption {
+  text-align: left;
+  padding-left: 12px;
+}
+
+.listOptionOn {
+  color: var(--accent);
+}
+
+.listOptionDim {
+  color: var(--text-muted);
 }
 
 .foot {
-  width: 100%;
-  margin-top: auto;
-  padding-top: 24px;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 28px;
 }
 
-.next {
-  width: 100%;
-  height: 52px;
-  border: none;
-  border-radius: 16px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 15.5px;
-  font-weight: 700;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-/* 되돌아가는 길은 나아가는 길과 같은 무게로 세우지 않는다 */
+/* 나아가는 길과 되돌아가는 길을 같은 무게로 둔다. 고르면 알아서 넘어가니 "다음"은
+   숫자 칸과 기타와 복수 선택에서만 쓰이는 보조 길이다 */
+.next,
 .back {
   border: none;
   background: transparent;
-  padding: 10px;
+  padding: 8px;
   color: var(--text-muted);
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-family: inherit;
+  letter-spacing: 0.02em;
   cursor: pointer;
+}
+
+.next:hover,
+.back:hover {
+  color: var(--text-sub);
+}
+
+.nextReady {
+  color: var(--text-sub);
 }

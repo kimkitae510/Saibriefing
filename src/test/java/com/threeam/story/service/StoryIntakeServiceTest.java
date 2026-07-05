@@ -9,13 +9,20 @@ import com.threeam.global.exception.custom.BusinessException;
 import com.threeam.story.dto.StoryIntakeRequest;
 import com.threeam.story.dto.StoryIntakeResponse;
 import com.threeam.story.entity.BreakupInitiator;
+import com.threeam.story.entity.ClingReaction;
 import com.threeam.story.entity.ContactMode;
 import com.threeam.story.entity.ContactPoint;
 import com.threeam.story.entity.IntakeGender;
+import com.threeam.story.entity.LastActionBeforeCut;
+import com.threeam.story.entity.NewRelationOverlap;
 import com.threeam.story.entity.PartnerAction;
 import com.threeam.story.entity.PartnerNewRelation;
 import com.threeam.story.entity.PreBreakupChange;
 import com.threeam.story.entity.PriorReunion;
+import com.threeam.story.entity.PriorReunionPath;
+import com.threeam.story.entity.RepeatBreakupPattern;
+import com.threeam.story.entity.RepeatSeverity;
+import com.threeam.story.entity.SelfEndReason;
 import com.threeam.story.entity.Story;
 import com.threeam.story.entity.StoryIntake;
 import com.threeam.story.repository.StoryIntakeRepository;
@@ -23,6 +30,7 @@ import com.threeam.story.repository.StoryRepository;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -123,6 +131,88 @@ class StoryIntakeServiceTest {
     }
 
     @Test
+    @DisplayName("이름을 비우고 낸 문진도 저장되고, 빈 이름은 null로 접힌다")
+    void savesWithoutCallName() {
+        ownedStory();
+        given(intakeRepository.findByStoryId(STORY_ID)).willReturn(Optional.empty());
+        given(intakeRepository.save(any(StoryIntake.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+
+        StoryIntakeResponse response = service.save(USER_ID, STORY_ID, new StoryIntakeRequest(
+                "  ", 28, null, null, null, 12, null, null, PriorReunion.ONCE, null, null,
+                null, null, null, null, null, null, null, List.of(), List.of(), null));
+
+        assertThat(response.submitted()).isTrue();
+        assertThat(response.callName()).isNull();
+        assertThat(response.priorReunion()).isEqualTo(PriorReunion.ONCE);
+    }
+
+    @Test
+    @DisplayName("이름을 건너뛰면 블록은 내담자로 부른다")
+    void fallsBackToDefaultCallName() {
+        StoryIntake intake = StoryIntake.builder().storyId(STORY_ID).userAge(31).build();
+        createdAt(intake, LocalDateTime.now());
+
+        assertThat(StoryIntakeService.describe(intake))
+                .startsWith("유저가 직접 입력한 기본 정보:\n- 유저를 부르는 이름: 내담자\n- 유저: 31세");
+    }
+
+    @Test
+    @DisplayName("가지 답(붙잡은 반응, 차단 직전 행동, 먼저 끝낸 이유, 새 사람 시점)이 블록에 실린다")
+    void describesBranchAnswers() {
+        StoryIntake intake = StoryIntake.builder()
+                .storyId(STORY_ID)
+                .initiator(BreakupInitiator.SELF)
+                .contactMode(ContactMode.BLOCKED)
+                .partnerHasNew(PartnerNewRelation.CONFIRMED)
+                .branches(new StoryIntake.Branches(ClingReaction.CLUNG_WAVERED,
+                        RepeatBreakupPattern.SAME_ISSUE, RepeatSeverity.MORE_FINAL,
+                        PriorReunionPath.PARTNER_RETURNED, LastActionBeforeCut.BEGGED,
+                        SelfEndReason.IMPULSIVE, NewRelationOverlap.RIGHT_AFTER))
+                .build();
+        createdAt(intake, LocalDateTime.now());
+
+        String block = StoryIntakeService.describe(intake);
+
+        assertThat(block).contains("전에 헤어졌을 때와 이번 이별의 이유: 같은 문제로");
+        assertThat(block).contains("이번 이별의 무게(지난번과 비교): 지난번보다 훨씬 단호했다");
+        assertThat(block).contains("지난번에 다시 만나게 된 경로: 상대가 먼저 돌아왔다");
+        assertThat(block).contains("유저가 먼저 헤어지자고 한 이유: 홧김에, 충동적으로");
+        assertThat(block).contains("헤어진 뒤 유저가 붙잡았는지와 상대 반응: 매달리니 상대가 흔들렸다");
+        assertThat(block).contains("차단이나 읽씹 직전 유저의 마지막 행동: 많이 매달렸다");
+        assertThat(block).contains("상대의 새 사람이 생긴 시점: 헤어지자마자");
+    }
+
+    @Test
+    @DisplayName("기타를 고른 칸은 직접 쓴 글이 블록에 실리고, 모르는 칸과 빈 글은 버린다")
+    void describesOtherAnswers() {
+        ownedStory();
+        given(intakeRepository.findByStoryId(STORY_ID)).willReturn(Optional.empty());
+        given(intakeRepository.save(any(StoryIntake.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+        Map<String, String> others = new java.util.HashMap<>();
+        others.put("initiator", "  서로 동시에 말했다  ");
+        others.put("contactMode", "   ");
+        others.put("hacked", "무시할 것");
+
+        StoryIntakeResponse response = service.save(USER_ID, STORY_ID, new StoryIntakeRequest(
+                null, null, null, null, null, null, BreakupInitiator.OTHER, ContactMode.OTHER,
+                null, null, null, null, null, null, null, null, null, null,
+                List.of(PartnerAction.REACHED_OUT, PartnerAction.UNKNOWN), List.of(), others));
+
+        assertThat(response.otherAnswers()).containsOnlyKeys("initiator");
+        // 잘 모르겠다는 배타 — 다른 행동과 같이 오면 그것만 남는다
+        assertThat(response.partnerActions()).containsExactly(PartnerAction.UNKNOWN);
+
+        StoryIntake saved = StoryIntake.builder().storyId(STORY_ID)
+                .initiator(BreakupInitiator.OTHER).contactMode(ContactMode.OTHER)
+                .otherAnswers(Map.of("initiator", "서로 동시에 말했다")).build();
+        String block = StoryIntakeService.describe(saved);
+        assertThat(block).contains("먼저 이별을 원한 쪽: 기타(직접 입력: 서로 동시에 말했다)");
+        assertThat(block).contains("연락 상황(첫 입력 시점): 기타");
+    }
+
+    @Test
     @DisplayName("빈 폼은 프롬프트 블록을 만들지 않는다")
     void skipsEmptyBlock() {
         StoryIntake empty = StoryIntake.builder().storyId(STORY_ID).build();
@@ -170,7 +260,8 @@ class StoryIntakeServiceTest {
     private static StoryIntakeRequest request(List<PartnerAction> actions, List<ContactPoint> points) {
         return new StoryIntakeRequest("지호", 28, 27, IntakeGender.MALE, 24, 12,
                 BreakupInitiator.PARTNER, ContactMode.NONE, PriorReunion.NONE,
-                PartnerNewRelation.UNKNOWN, PreBreakupChange.SUDDEN, actions, points);
+                PartnerNewRelation.UNKNOWN, PreBreakupChange.SUDDEN,
+                null, null, null, null, null, null, null, actions, points, null);
     }
 
     // @CreationTimestamp는 영속화 시점에 찍힌다 — 단위 테스트에는 그 시점이 없어 직접 넣는다.

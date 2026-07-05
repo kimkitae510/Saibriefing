@@ -13,8 +13,11 @@ import com.threeam.story.repository.StoryRepository;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.StringJoiner;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -27,6 +30,17 @@ public class StoryIntakeService {
 
     private final StoryIntakeRepository intakeRepository;
     private final StoryRepository storyRepository;
+
+    // 이름 칸을 건너뛴 사람을 부르는 말. 이름이 없다고 줄을 빼면 상담자가 대조 문장에서
+    // 주어를 통째로 빠뜨리므로, 빈칸 대신 이 호칭을 싣는다.
+    static final String DEFAULT_CALL_NAME = "내담자";
+
+    // "기타" 직접 입력을 받는 칸. 화면의 칸 이름과 같다. 모르는 키는 버린다.
+    static final Set<String> OTHER_FIELDS = Set.of("priorReunion", "repeatBreakupPattern",
+            "repeatSeverity", "priorReunionPath",
+            "initiator", "selfEndReason", "contactMode", "lastActionBeforeCut", "clingReaction",
+            "preBreakupChange", "partnerHasNew", "newRelationOverlap", "partnerActions");
+    static final int OTHER_MAX_LENGTH = 200;
 
     @Transactional(readOnly = true)
     public StoryIntakeResponse get(Long userId, Long storyId) {
@@ -54,17 +68,20 @@ public class StoryIntakeService {
                     .priorReunion(request.priorReunion())
                     .partnerHasNew(request.partnerHasNew())
                     .preBreakupChange(request.preBreakupChange())
-                    .partnerActions(exclusive(request.partnerActions(), PartnerAction.NOTHING))
+                    .branches(request.branches())
+                    .partnerActions(exclusiveActions(request.partnerActions()))
                     .contactPoints(exclusive(request.contactPoints(), ContactPoint.NONE))
+                    .otherAnswers(sanitizeOthers(request.otherAnswers()))
                     .build());
         } else {
             intake.update(request.callName(),
                     request.userAge(), request.partnerAge(), request.userGender(),
                     request.datingMonths(), request.daysSinceBreakup(), request.initiator(),
                     request.contactMode(), request.priorReunion(), request.partnerHasNew(),
-                    request.preBreakupChange(),
-                    exclusive(request.partnerActions(), PartnerAction.NOTHING),
-                    exclusive(request.contactPoints(), ContactPoint.NONE));
+                    request.preBreakupChange(), request.branches(),
+                    exclusiveActions(request.partnerActions()),
+                    exclusive(request.contactPoints(), ContactPoint.NONE),
+                    sanitizeOthers(request.otherAnswers()));
         }
         return StoryIntakeResponse.of(intake);
     }
@@ -80,8 +97,8 @@ public class StoryIntakeService {
         if (intake == null) {
             return null;
         }
-        StringBuilder block = new StringBuilder("유저가 직접 입력한 기본 정보:");
-        line(block, "유저를 부르는 이름", intake.getCallName());
+        StringBuilder block = new StringBuilder();
+        Map<String, String> others = intake.otherAnswerMap();
         line(block, "유저", person(intake.getUserAge(),
                 intake.getUserGender() == null ? null : intake.getUserGender().caseVocabulary()));
         line(block, "상대", person(intake.getPartnerAge(), null));
@@ -89,23 +106,59 @@ public class StoryIntakeService {
         // 입력값은 첫 입력 시점의 것이라 그대로 실으면 두 달 뒤에도 "12일 전"이다.
         // 경과일은 그때 이후 흐른 날을 더해 현재 시점으로 보정한다.
         line(block, "이별 후 경과", elapsedSinceBreakup(intake));
-        line(block, "먼저 이별을 원한 쪽",
-                intake.getInitiator() == null ? null : intake.getInitiator().label());
-        line(block, "이 상대와 재회 경험",
-                intake.getPriorReunion() == null ? null : intake.getPriorReunion().label());
-        line(block, "이별 직전 관계 변화",
-                intake.getPreBreakupChange() == null ? null : intake.getPreBreakupChange().label());
+        line(block, "먼저 이별을 원한 쪽", choice(intake.getInitiator(),
+                intake.getInitiator() == null ? null : intake.getInitiator().label(), others, "initiator"));
+        line(block, "이 상대와 재회 경험", choice(intake.getPriorReunion(),
+                intake.getPriorReunion() == null ? null : intake.getPriorReunion().label(),
+                others, "priorReunion"));
+        line(block, "전에 헤어졌을 때와 이번 이별의 이유", choice(intake.getRepeatBreakupPattern(),
+                intake.getRepeatBreakupPattern() == null ? null : intake.getRepeatBreakupPattern().label(),
+                others, "repeatBreakupPattern"));
+        line(block, "이번 이별의 무게(지난번과 비교)", choice(intake.getRepeatSeverity(),
+                intake.getRepeatSeverity() == null ? null : intake.getRepeatSeverity().label(),
+                others, "repeatSeverity"));
+        line(block, "지난번에 다시 만나게 된 경로", choice(intake.getPriorReunionPath(),
+                intake.getPriorReunionPath() == null ? null : intake.getPriorReunionPath().label(),
+                others, "priorReunionPath"));
+        line(block, "이별 직전 관계 변화", choice(intake.getPreBreakupChange(),
+                intake.getPreBreakupChange() == null ? null : intake.getPreBreakupChange().label(),
+                others, "preBreakupChange"));
+        line(block, "유저가 먼저 헤어지자고 한 이유", choice(intake.getSelfEndReason(),
+                intake.getSelfEndReason() == null ? null : intake.getSelfEndReason().label(),
+                others, "selfEndReason"));
+        line(block, "헤어진 뒤 유저가 붙잡았는지와 상대 반응", choice(intake.getClingReaction(),
+                intake.getClingReaction() == null ? null : intake.getClingReaction().label(),
+                others, "clingReaction"));
+        line(block, "차단이나 읽씹 직전 유저의 마지막 행동", choice(intake.getLastActionBeforeCut(),
+                intake.getLastActionBeforeCut() == null ? null : intake.getLastActionBeforeCut().label(),
+                others, "lastActionBeforeCut"));
         line(block, "앞으로 마주칠 접점", labels(intake.contactPointList().stream()
                 .map(ContactPoint::label).toList()));
         // 아래 셋은 시간이 지나면 바뀌는 값이다. 첫 입력 시점임을 밝혀야 이후 대화에서
         // 드러난 최신 상황(사실 원장)과 어긋날 때 원장이 이긴다는 게 읽힌다.
-        line(block, "연락 상황(첫 입력 시점)",
-                intake.getContactMode() == null ? null : intake.getContactMode().label());
-        line(block, "상대에게 새 사람(첫 입력 시점)",
-                intake.getPartnerHasNew() == null ? null : intake.getPartnerHasNew().label());
+        line(block, "연락 상황(첫 입력 시점)", choice(intake.getContactMode(),
+                intake.getContactMode() == null ? null : intake.getContactMode().label(),
+                others, "contactMode"));
+        line(block, "상대에게 새 사람(첫 입력 시점)", choice(intake.getPartnerHasNew(),
+                intake.getPartnerHasNew() == null ? null : intake.getPartnerHasNew().label(),
+                others, "partnerHasNew"));
+        line(block, "상대의 새 사람이 생긴 시점", choice(intake.getNewRelationOverlap(),
+                intake.getNewRelationOverlap() == null ? null : intake.getNewRelationOverlap().label(),
+                others, "newRelationOverlap"));
         line(block, "이별 후 상대가 먼저 한 행동(첫 입력 시점)",
-                labels(intake.partnerActionList().stream().map(PartnerAction::label).toList()));
-        return block.indexOf("\n") < 0 ? null : block.toString();
+                labels(intake.partnerActionList().stream()
+                        .map(action -> action == PartnerAction.OTHER
+                                ? otherText(others, "partnerActions", action.label())
+                                : action.label())
+                        .toList()));
+        // 다른 답이 하나도 없으면 블록을 안 만든다 — 호칭 한 줄만 실리면 "기본 정보"가 아니다.
+        if (block.isEmpty()) {
+            return null;
+        }
+        StringBuilder head = new StringBuilder("유저가 직접 입력한 기본 정보:");
+        line(head, "유저를 부르는 이름",
+                intake.getCallName() == null ? DEFAULT_CALL_NAME : intake.getCallName());
+        return head.append(block).toString();
     }
 
     // 첫 입력 시점의 경과일에 그 뒤로 흐른 날을 더한다.
@@ -167,6 +220,43 @@ public class StoryIntakeService {
         int years = months / 12;
         int rest = months % 12;
         return rest == 0 ? years + "년" : years + "년 " + rest + "개월";
+    }
+
+    // 보기 대신 "기타"를 골랐으면 직접 쓴 글을 싣는다. 글이 없으면 "기타"만 남는다.
+    private static String choice(Enum<?> value, String label, Map<String, String> others, String field) {
+        if (value == null) {
+            return null;
+        }
+        return "OTHER".equals(value.name()) ? otherText(others, field, label) : label;
+    }
+
+    private static String otherText(Map<String, String> others, String field, String fallback) {
+        String text = others.get(field);
+        return text == null || text.isBlank() ? fallback : "기타(직접 입력: " + text + ")";
+    }
+
+    // 아는 칸만, 빈 글은 버리고, 길면 자른다. 화면이 보낸 키를 그대로 믿으면 프롬프트에
+    // 아무 키나 실린다.
+    static Map<String, String> sanitizeOthers(Map<String, String> raw) {
+        Map<String, String> clean = new LinkedHashMap<>();
+        if (raw == null) {
+            return clean;
+        }
+        raw.forEach((field, text) -> {
+            if (!OTHER_FIELDS.contains(field) || text == null || text.isBlank()) {
+                return;
+            }
+            String trimmed = text.trim();
+            clean.put(field, trimmed.length() > OTHER_MAX_LENGTH
+                    ? trimmed.substring(0, OTHER_MAX_LENGTH) : trimmed);
+        });
+        return clean;
+    }
+
+    // "아무것도 없었다"가 있으면 그것만, 아니면 "잘 모르겠다"가 있으면 그것만 남긴다.
+    private static List<PartnerAction> exclusiveActions(List<PartnerAction> values) {
+        List<PartnerAction> once = exclusive(values, PartnerAction.NOTHING);
+        return once.contains(PartnerAction.NOTHING) ? once : exclusive(once, PartnerAction.UNKNOWN);
     }
 
     private static String labels(List<String> values) {
