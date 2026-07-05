@@ -14,18 +14,20 @@ spring:
       # 비동기 응답(진단 등 CompletableFuture 반환)의 HTTP 대기 상한.
       # 미설정이면 톰캣 기본 30초 — 진단 LLM 대기보다 짧아, 그보다 긴 진단은 성공하고도
       # 요청이 먼저 끊겼다(실측: 타임아웃 3초 뒤 진단 완료, 결과는 저장됨).
-      # 진단은 판정(1호출) 뒤 정밀 판독(2호출)이 이어진다 — LLM 상한(90초) 2회 + 저장
-      # 여유를 덮게 240초. 이게 먼저 터지면 유저는 에러를 보는데 LLM 호출은 계속 돈다.
-      request-timeout: 240s
+      # 분석은 판정(1호출, 상한 180초) 뒤 판독과 결정(각 상한 240초)이 이어진다.
+      # 최악 합보다 크게 720초 — 이게 먼저 터지면 유저는 에러를 보는데 LLM 호출은 계속 돈다.
+      request-timeout: 720s
 
   config:
     # 저장소 밖에서 관리하는 설정. 파일이 없으면 조용히 무시된다.
-    # persona.yml: 페르소나 실문구 / reminder.yml: 매 턴 스타일 리마인더
+    # persona.yml: 페르소나 실문구 / goals.yml: 탐색 채팅 목표 목록과 판정 지시
+    # reminder.yml: 매 턴 스타일 리마인더
     # extractor.yml: 채팅 사실 추출 프롬프트 / rubric.yml: 진단 루브릭 전문
     # reading.yml: 정밀 판독(2호출) 지시 전문
     # application-secret.yml: 실연동 키(메일, 소셜 등 — gitignore)
     import:
       - optional:file:./persona.yml
+      - optional:file:./goals.yml
       - optional:file:./reminder.yml
       - optional:file:./extractor.yml
       - optional:file:./rubric.yml
@@ -92,7 +94,7 @@ llm:
     # 진단(deep) 응답 대기 상한. 채팅 값의 배수가 아니라 독립값이다 — 배수로 묶여 있던 동안
     # 채팅 타임아웃을 올릴 때마다 진단이 따라 올라 아래 두 상한을 넘길 뻔했다.
     # usage.assessment-lock-ttl-seconds와 spring request-timeout보다 작아야 한다.
-    assessment-timeout-seconds: 90
+    assessment-timeout-seconds: 180
     # thinking 세기. 2.5 계열은 budget(토큰), 3.x는 level을 쓴다 — 세대마다 필드가 다르다.
     # level 유효값은 low|medium|high다. minimal은 gemini-3.1-pro-preview에서 거부당한다(실측 오류) —
     # 예전 기록에 minimal이 보이는 건 그때 쓰던 3.5-flash 얘기다. 모델이 바뀌면 유효값도 바뀐다.
@@ -114,6 +116,34 @@ llm:
     input-price-per-million: ${LLM_PRICE_INPUT:0}
     cached-input-price-per-million: ${LLM_PRICE_CACHED_INPUT:0}
     output-price-per-million: ${LLM_PRICE_OUTPUT:0}
+  # 정밀 판독(2호출) 프로바이더 실험 — 비우면 기존 deep 경로, anthropic이면 Claude로 판독만 분기.
+  reading:
+    baseline: ${LLM_READING_BASELINE:false}
+    provider: ${LLM_READING_PROVIDER:}
+  anthropic:
+    api-key: ${ANTHROPIC_API_KEY:}
+    reading-model: ${LLM_READING_MODEL:claude-sonnet-5}
+    reading-timeout-seconds: ${LLM_READING_TIMEOUT_SECONDS:180}
+    usd-krw: ${LLM_USD_KRW:1400}
+  # OpenAI — 정밀 판독(2호출) 실험 경로. LLM_READING_PROVIDER=openai일 때만 탄다.
+  # 단가는 표로 안 들고 주입만 받는다 — 계열과 이름이 자주 바뀌는 구간이라 틀린 표가
+  # 맞는 것처럼 찍히는 쪽이 더 위험하다. 값을 안 넣으면 비용 로그가 토큰 수만 남긴다.
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    reading-model: ${LLM_OPENAI_READING_MODEL:}
+    # 결정 호출 전용 모델(선택) — 비우면 판독 모델과 같은 것을 쓴다.
+    decision-model: ${LLM_OPENAI_DECISION_MODEL:}
+    verdict-model: ${LLM_OPENAI_VERDICT_MODEL:}
+    # 탐색 채팅(답변 + 목표 판정) 전용 모델. 비우면 채팅은 llm.provider 경로로 돈다.
+    chat-model: ${LLM_OPENAI_CHAT_MODEL:}
+    reading-timeout-seconds: ${LLM_OPENAI_TIMEOUT_SECONDS:240}
+    # 채팅 대기 상한. usage.chat-lock-ttl-seconds보다 작아야 한다(GeminiProperties timeout-seconds와 같은 이유).
+    chat-timeout-seconds: ${LLM_OPENAI_CHAT_TIMEOUT_SECONDS:50}
+    reasoning-effort: ${LLM_OPENAI_REASONING_EFFORT:low}
+    price-input: ${LLM_OPENAI_PRICE_INPUT:0}
+    price-cached-input: ${LLM_OPENAI_PRICE_CACHED_INPUT:0}
+    price-output: ${LLM_OPENAI_PRICE_OUTPUT:0}
+    usd-krw: ${LLM_USD_KRW:1450}
   # Vertex AI — 같은 Gemini를 GCP 상품 경로로(크레딧 결제). 인증은 GOOGLE_APPLICATION_CREDENTIALS
   # (서비스 계정 키 파일 경로) 표준 환경변수. 크레딧 소진/만료 시 LLM_PROVIDER=gemini로 복귀.
   vertex:
@@ -128,7 +158,7 @@ llm:
     match-thinking-budget: ${LLM_MATCH_THINKING_BUDGET:0}
     match-thinking-level: ${LLM_MATCH_THINKING_LEVEL:low}
     timeout-seconds: 50              # gemini 경로와 같은 값 유지(위 주석 참고)
-    assessment-timeout-seconds: 90
+    assessment-timeout-seconds: 180
     thinking-budget: ${LLM_THINKING_BUDGET:2048}
     thinking-level: ${LLM_THINKING_LEVEL:low}
     # 채팅 temperature. 미설정이면 API 기본 1.0으로 돌아 금지 규칙 이탈이 답변 길이에 비례해
@@ -178,8 +208,8 @@ usage:
   # 생성 중 잠금(유저+종류 단위)의 자동 만료. 해당 종류의 LLM 응답 상한보다 반드시 길어야 한다 —
   # 짧으면 아직 생성 중인데 락이 만료돼 두 번째 요청이 뺏어가고, 같은 유저의 LLM 호출이 겹친다.
   # 예전 키(in-flight-ttl-seconds)는 UsageProperties에 대응 필드가 없어 값이 무시되고 있었다.
-  chat-lock-ttl-seconds: 60          # 채팅 LLM 상한 50초
-  assessment-lock-ttl-seconds: 100   # 진단 LLM 상한 90초
+  chat-lock-ttl-seconds: 110         # 채팅은 목표 판정(50초 상한) 뒤 답변(50초 상한)이 순차라 최악 합 100초 + 여유
+  assessment-lock-ttl-seconds: 700   # 분석 파이프라인 최악 합(진단 180 + 판독 240 + 결정 240) + 여유
   match-lock-ttl-seconds: 100        # 유료 사례 매칭 — 후보 열넷의 본문을 읽어 진단과 같은 무게
 
   # 연속 실패 가드. 실패는 후차감(미차감)이라 막지 않으면 무한 무료 LLM 호출이 된다.
@@ -239,17 +269,7 @@ management:
 match:
   case-file: ${MATCH_CASE_FILE:사례데이터.json}
 
-# 추천 질문 칩(서비스 자산, gitignore) — 시동 때 메모리로 로드. persona/rubric과 달리
-# spring.config.import로 안 읽는다: 모듈 키가 ACTION_NOW 같은 대문자에 밑줄이라
-# 완화 바인딩이 뭉갠다(ChipStore 주석 참고).
-chip:
-  menu-file: ${CHIP_MENU_FILE:chip-menu.yml}
-  modules-file: ${CHIP_MODULES_FILE:chip-modules.yml}
-  # 추천 칩 문구를 유저 상황에 맞게 다시 쓸지. 누르면 그대로 유저 말풍선이 되는 문장이라
-  # 실측에서 이상하면 즉시 끌 수 있게 뒀다. 끄면 카탈로그 원문이 그대로 뜬다.
-  rewrite-label: ${CHIP_REWRITE_LABEL:true}
-
 # 진단 공유 — /s/{token} OG 페이지가 절대 URL(og:url, og:image)을 만들 때 쓰는 서비스 주소.
-# 크롤러가 읽는 값이라 상대 경로로는 안 되고, 운영에선 https://3amchat.xyz 를 주입한다.
+# 크롤러가 읽는 값이라 상대 경로로는 안 되고, 운영에선 https://saibriefing.com 을 주입한다.
 share:
   base-url: ${SHARE_BASE_URL:http://localhost:5173}

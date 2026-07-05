@@ -40,8 +40,8 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @EnableConfigurationProperties({JwtProperties.class, GeminiProperties.class, VertexAiProperties.class,
-        ChatPersonaProperties.class, FactExtractionProperties.class,
-        AssessmentProperties.class, ReadingProperties.class, UsageProperties.class,
+        ChatPersonaProperties.class, com.threeam.llm.ChatGoalProperties.class, FactExtractionProperties.class,
+        AssessmentProperties.class, ReadingProperties.class, com.threeam.llm.AnthropicProperties.class, com.threeam.llm.OpenAiProperties.class, UsageProperties.class,
         MatchProperties.class, PaymentProperties.class, MailProperties.class, OAuthProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
@@ -95,6 +95,9 @@ public class SecurityConfig {
                         // PG 웹훅 — 토스 서버가 호출하므로 JWT가 없다. 페이로드를 신뢰하지 않고
                         // PG 조회로 재확인하는 구조라(PaymentWebhookController) 열어도 상태 위조가 불가능하다.
                         .requestMatchers("/api/payments/webhook/**").permitAll()
+                        // 개발용 재분류 — 컨트롤러 자체가 llm.reading.dev-endpoints=true일 때만 뜨고
+                        // 루프백 요청만 받는다. 운영에는 그 속성이 없어 404다.
+                        .requestMatchers("/api/dev/**").permitAll()
                         // management 포트(운영: 127.0.0.1:9090)로 온 요청은 인증 면제 — 그 포트는
                         // 외부에서 닿을 수 없고, 같은 서버의 수집 에이전트(Alloy)가 지표를 긁는 통로다.
                         // JWT를 에이전트에 쥐여주면 토큰 만료/회전이 수집 장애가 되므로 포트 격리로 대체한다.

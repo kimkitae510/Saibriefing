@@ -20,38 +20,129 @@ public class MockLlmClient implements LlmClient {
                         + "(개발용 임시 응답 — 실제 LLM 연동 전 고정 메시지입니다.)");
     }
 
-    // 정밀 판독 호출(payload 블록이 실린 프롬프트)만 갈라 스토리북 고정 JSON을 돌려준다 —
-    // 리포트 화면과 저장 흐름을 키, 비용 없이 검증하기 위한 분기.
+    // 정밀 판독 호출만 갈라 고정 응답을 돌려준다 — 리포트 화면과 저장 흐름을
+    // 키, 비용 없이 검증하기 위한 분기. 2단 파이프라인은 프롬프트 문구로 단을 가린다.
     @Override
     public CompletableFuture<String> generateJsonDeep(List<ChatMessage> messages,
                                                       Map<String, Object> responseSchema) {
+        boolean analysisCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.ANALYSIS_ASK));
+        if (analysisCall) {
+            return CompletableFuture.completedFuture("""
+                    (개발용 임시 분석) 이 이별의 핵심은 마지막 다툼이 아니라, 반복된 갈등을 마주 앉아 조율한 경험이 없었다는 데 있다. 두 사람은 만나면 좋았지만, 불편한 문제가 생기면 한쪽은 참았고 한쪽은 피했다.
+
+                    상대의 마음이 사라졌다고 볼 근거는 약하다. 다만 다시 시작해도 같은 일이 반복되리라는 기대가 앞서 있는 상태로 보인다.
+
+                    지금 해야 할 것은 확인성 연락을 멈추고, 2주 뒤 짐 정리를 계기로 짧게 연락하는 것이다. 그 연락에도 응답이 없으면 시도를 멈춘다.""");
+        }
+        boolean cardCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.CARD_ASK));
+        if (cardCall) {
+            return CompletableFuture.completedFuture("""
+                    {"cards": [
+                       {"para": 2, "direction": "DOWN", "pivot": true, "title": "(개발용 임시) 같은 일이 반복되리라는 기대가 판을 내립니다"}
+                     ],
+                     "reworked": []}""");
+        }
+        boolean presentCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.PRESENT_ASK));
+        if (presentCall) {
+            return CompletableFuture.completedFuture(
+                    "(개발용 임시 현재화) 당시의 호의는 시간이 지나며 현재형 감정보다 관계의 기억으로 남았을 가능성이 크다. "
+                            + "다시 닿으면 익숙함이 먼저 활성화되겠지만, 그것이 연애 감정으로 넘어갈지는 반복 기대가 가른다.");
+        }
+        boolean criticCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.CRITIC_ASK));
+        if (criticCall) {
+            return CompletableFuture.completedFuture("PASS");
+        }
+        boolean synthCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.SYNTH_ASK));
+        if (synthCall) {
+            return CompletableFuture.completedFuture(
+                    "(개발용 임시 종합) 세 판독은 마지막 거절의 무게를 다르게 읽었다. 앞뒤 흐름을 가장 적은 모순으로 설명하는 해석은 "
+                            + "마음의 소멸이 아니라 반복 기대의 문제라는 쪽이다. 현재 재회 가능성은 중간쯤에서 반복 기대 해소 여부에 달려 있다.");
+        }
+        boolean mindCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.MIND_ASK));
+        if (mindCall) {
+            return CompletableFuture.completedFuture(
+                    "(개발용 임시 마음) 이 사람 안에는 남은 정과 마지막 대화의 상처가 같이 있습니다. 시간이 상처는 가라앉혔지만 같은 일이 반복되리라는 생각은 그대로입니다.");
+        }
+        boolean gradeCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.GRADE_ASK));
+        if (gradeCall) {
+            return CompletableFuture.completedFuture("MID");
+        }
+        boolean verdictCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.VERDICT_ASK));
+        if (verdictCall) {
+            return CompletableFuture.completedFuture("""
+                    (개발용 임시 판정) 판정 한 줄: 이 이별은 마음의 소멸이 아니라 반복 기대의 문제입니다.
+                    올리는 카드, 남은 호의: 이별 직전까지 관계를 유지하고 호의를 보였습니다 — 마음이 남아 있을 가능성이 여지를 올립니다.
+                    내리는 카드, 반복 기대: 확인성 연락에 응답이 없었습니다 — 같은 갈등이 반복되리라는 기대가 여지를 내립니다.""");
+        }
+        boolean editCall = messages.stream()
+                .anyMatch(m -> m.content().startsWith(ReadingLlm.EDIT_HEADER));
+        if (editCall) {
+            return CompletableFuture.completedFuture("""
+                    {
+                      "caseStatus": "POSSIBLE",
+                      "gateNote": "",
+                      "analysis": [
+                        {"subtitle": "(개발용 임시) 이 이별의 핵심은 마지막 다툼이 아니라 조율의 부재입니다", "body": "두 사람은 만나면 좋았지만, 불편한 문제가 생기면 한쪽은 참았고 한쪽은 피했습니다.\\n\\n반복된 갈등을 마주 앉아 조율한 경험이 이 관계에는 없었습니다."}
+                      ],
+                      "mind": [
+                        {"subtitle": "(개발용 임시) 마음이 사라졌다고 볼 근거는 약합니다", "body": "다시 시작해도 같은 일이 반복되리라는 기대가 감정보다 앞서 있는 상태로 보입니다."}
+                      ],
+                      "answers": [],
+                      "action": [
+                        {"subtitle": "(개발용 임시) 지금은 확인성 연락을 멈출 때입니다", "body": "2주 뒤 짐 정리를 계기로 짧게 연락하고, 그 연락에도 응답이 없으면 시도를 멈춥니다."}
+                      ],
+                      "outlookLevel": "LOW",
+                      "verdictLine": "(개발용 임시) 마음의 문제가 아니라 반복 기대의 문제라, 그 기대를 바꿀 근거가 확인되기 전까지는 낮게 봅니다.",
+                      "verdict": [
+                        {"subtitle": "(개발용 임시) 이 이별은 마음의 소멸이 아니라 반복 기대의 문제입니다", "body": "이별 직전까지 호의를 보여, 마음이 남아 있을 가능성이 가능성을 올립니다.", "direction": "UP"},
+                        {"subtitle": "(개발용 임시) 다만 반복 기대를 바꿀 근거가 아직 없습니다", "body": "확인성 연락에 응답이 없어, 같은 갈등이 반복되리라는 기대가 가능성을 내립니다.", "direction": "DOWN"}
+                      ]
+                    }
+                    """);
+        }
         boolean readingCall = messages.stream()
                 .anyMatch(m -> m.content().startsWith(ReadingLlm.PAYLOAD_HEADER));
         if (readingCall) {
             return CompletableFuture.completedFuture("""
                     {
-                      "diagnosisSummary": "(개발용 임시) 서버가 1호출 값으로 덮으므로 이 문장은 화면에 나가지 않습니다.",
-                      "diagnosis": [
-                        {"key": "partnerSignal", "label": "상대신호", "group": "CORE", "rank": 1, "level": "유리", "evidenceState": "CONFIRMED", "headline": "(개발용 임시) 복사값", "reading": "(개발용 임시) 복사값", "factIds": ["F01"]}
-                      ],
-                      "analysisSection": {"title": "(개발용 임시) 이번 이별, 뭐가 문제였을까?"},
+                      "caseStatus": "POSSIBLE",
+                      "gateNote": "",
+                      "analysisSection": {"title": "이 관계에서 진짜 중요했던 것"},
                       "analysisChapters": [
-                        {"eyebrow": "(개발용 임시) 먼저 풀어야 할 모순", "title": "(개발용 임시) 미래를 말한 다음날 왜 물러났을까?", "chapterRole": "CORE_CONTRADICTION", "interpretationId": null, "answer": "(개발용 임시) 마음이 식어서가 아니라 마지막 대화의 상처 때문에 가깝습니다.", "reading": "(개발용 임시) 직전까지 관계를 다시 믿어보려는 방향으로 움직이고 있었습니다. 그 방향이 하루 만에 꺾인 것은 감정의 소멸보다 충격의 크기를 말해줍니다.", "psychology": null, "repairPrinciple": null, "evidenceIds": ["F01"]},
-                        {"eyebrow": "(개발용 임시) 조금 과하게 해석하고 있을 수 있는 부분", "title": "(개발용 임시) 그 사건은 마음이 떠났다는 신호였을까?", "chapterRole": "SIGNAL_CORRECTION", "interpretationId": "U01", "answer": "(개발용 임시) 현재 정보로는 그렇게 보기 어렵습니다.", "reading": "(개발용 임시) 이 사건에서 더 강한 정보는 기준의 차이가 만든 서운함입니다.", "psychology": {"concept": "정서적 안전감 확인", "reading": "(개발용 임시) 차가워진 분위기에서 관계가 안전한지 확인하려는 반응이 나타났습니다."}, "repairPrinciple": null, "evidenceIds": ["F02"]}
+                        {"title": "(개발용 임시) 위로와 게임으로 나뉘어 보인 싸움은 사실 하나의 충돌이었습니다", "reading": "(개발용 임시) 한쪽에는 연결의 요청이었던 행동이 다른 쪽에는 부담과 침해로 도착했고, 그 번역 오류가 관계 후반 내내 반복됐습니다.", "evidenceIds": ["F01", "F04"]},
+                        {"title": "(개발용 임시) 만나면 좋았다는 기억이 일상 운영까지 좋았다는 뜻은 아닙니다", "reading": "(개발용 임시) 좋은 부분과 어려운 부분이 서로 다른 환경에서 나타났고, 반복 문제를 마주 앉아 조율할 기회는 적었습니다.", "evidenceIds": ["F02"]}
                       ],
-                      "actionPlan": {
-                        "title": "(개발용 임시) 지금은 어떻게 움직이는 게 나을까?",
-                        "stance": "USE_EXISTING_EVENT",
-                        "answer": "(개발용 임시) 이미 잡혀 있는 만남을 그대로 쓰는 것이 지금 할 수 있는 가장 자연스러운 접촉입니다.",
-                        "timing": "(개발용 임시) 2주 뒤 예정된 만남",
-                        "whyThisTiming": "(개발용 임시) 새 명분을 만들지 않아도 되고, 그 전에 연락을 밀면 지친 자리를 다시 건드립니다.",
-                        "goal": "(개발용 임시) 관계 이야기를 다시 꺼낼 여지가 있는지 확인",
-                        "do": ["(개발용 임시) 만나는 자리에서는 사과나 설득보다 근황과 태도로 보여준다"],
-                        "stopCondition": "(개발용 임시) 상대가 관계 이야기를 피하면 그 자리에서 더 밀지 않는다",
-                        "avoid": ["(개발용 임시) 만남 전 장문 메시지", "(개발용 임시) 반복적인 연락 시도"]
-                      },
-                      "chipSeeds": ["(개발용 임시) 만나면 무슨 말부터 해야 할까?", "(개발용 임시) 그날 반응이 애매하면 어떻게 해?"],
-                      "internal": {"nowState": "RELATIONSHIP_RECONSIDERATION", "resolveState": "UNSTABLE", "remainState": "PRESENT", "reselectState": "CONDITIONAL"}
+                      "synthesis": "(개발용 임시) 재회를 막는 핵심은 남은 감정의 양보다 다시 시작해도 같은 갈등이 반복될 것이라는 기대에 있습니다.",
+                      "outlookLevel": "LOW",
+                      "outlookAnalysis": "(개발용 임시) 이 판이 낮은 것은 감정의 소멸보다 관계 조율에 대한 기대가 꺾인 데 있습니다. 그 기대를 되살릴 행동이 아직 확인되지 않습니다.",
+                      "reasons": [
+                        {"label": "현재 관계 행동", "direction": "DOWN", "reading": "(개발용 임시) 관계를 다시 여는 움직임보다 종료를 유지하는 행동이 더 분명합니다. 이별 후 두 차례 확인성 연락에 응답이 없었습니다."},
+                        {"label": "관계 자산", "direction": "UP", "reading": "(개발용 임시) 과거의 애정 자체를 부정할 근거는 약합니다. 이별 직전까지 관계를 유지하고 호의를 보였습니다."}
+                      ],
+                      "prologueBlocks": [
+                        {"subtitle": "(개발용 임시) 만나면 좋았던 기억은 진짜였습니다", "body": "(개발용 임시) 두 사람은 만나면 좋았고, 서로에게 호의를 놓지 않은 채 이별 직전까지 관계를 지켜왔습니다.\\n\\n다만 좋았던 시간과 별개로, 반복되는 갈등을 마주 앉아 조율한 경험은 적었습니다."},
+                        {"subtitle": "(개발용 임시) 지금 가르는 건 남은 감정이 아니라 기대입니다", "body": "(개발용 임시) 이별 후의 연락에 응답이 없다는 사실은 마음의 소멸이 아니라, 다시 시작해도 같은 일이 반복되리라는 기대가 앞서 있다는 뜻으로 읽힙니다."}
+                      ],
+                      "mind": "(개발용 임시) 좋아했던 마음과 미안함이 남아 있을 수 있지만, 지금은 그 감정보다 이 관계를 다시 조율하러 들어오지 않겠다는 판단이 앞서 있습니다.",
+                      "innerVoice": "(개발용 임시) 미안한 마음은 있어. 그런데 다시 시작하면 또 같은 일이 반복될 것 같아.",
+                      "answers": [
+                        {"question": "(개발용 임시) 아직 저를 좋아하는 걸까요?", "answer": "(개발용 임시) 과거 애정 전체가 없었다고 볼 근거는 약하지만, 현재 확인되는 것은 관계를 다시 여는 행동이 없다는 사실입니다."}
+                      ],
+                      "action": {
+                        "now": "(개발용 임시) 추가 확인성 연락은 멈춥니다.",
+                        "why": "(개발용 임시) 지금 문제는 마음 표현의 부족이 아니라 상대가 대화 안으로 들어오지 않는 데 있기 때문입니다.",
+                        "nextMove": "(개발용 임시) 2주 뒤 짐 정리를 계기로 짧게 연락합니다.",
+                        "timing": "(개발용 임시) 2주 뒤 — 이별 직후의 방어가 가라앉는 시점입니다.",
+                        "stopCondition": "(개발용 임시) 그 연락에도 응답이 없으면 시도를 멈춥니다."
+                      }
                     }
                     """);
         }
