@@ -21,7 +21,7 @@ public class AssessmentController {
 
     private final AssessmentService assessmentService;
 
-    // 입력 폼 없이 사연의 대화를 읽어 분석한다. LLM 호출이 끼므로 논블로킹으로 반환한다.
+    // 사연의 대화를 읽어 분석한다. LLM 호출이 끼므로 논블로킹으로 반환한다.
     @PostMapping
     public CompletableFuture<ResponseEntity<AssessmentResponse>> assess(
             @AuthenticationPrincipal Long userId,
@@ -34,6 +34,16 @@ public class AssessmentController {
     public ResponseEntity<List<AssessmentResponse>> getHistory(@AuthenticationPrincipal Long userId,
                                                                @PathVariable Long storyId) {
         return ResponseEntity.ok(assessmentService.getHistory(userId, storyId));
+    }
+
+    // 분석이 도는 동안 화면이 폴링한다 — 어느 단계(판정/판독)인지. 진행 중이 아니면 stage=null.
+    @GetMapping("/progress")
+    public ResponseEntity<ProgressResponse> progress(@AuthenticationPrincipal Long userId,
+                                                     @PathVariable Long storyId) {
+        return ResponseEntity.ok(new ProgressResponse(assessmentService.progressStage(userId, storyId)));
+    }
+
+    public record ProgressResponse(String stage) {
     }
 
     // "만나는 중" 잠금을 유저가 직접 번복한다(분석이 오해했을 수 있다). 오판이던 잠금 판정을

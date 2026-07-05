@@ -136,8 +136,9 @@ public class Assessment {
                 ? new ArrayList<>(unansweredQuestions) : new ArrayList<>();
     }
 
-    // 상대 제안 확정(100)을 유저가 번복할 때 — 저장된 유형과 요인의 재계산 값으로 되돌린다(원장 정정과 세트).
-    public void retractOffer(int recalculatedProbability) {
+    // 상대 제안 확정(100)을 유저가 번복할 때. 새 파이프라인 판은 유형/요인이 없어 재계산
+    // 대역이 없다 — null로 되돌려 재분석(판독+결정)을 유도한다(원장 정정과 세트).
+    public void retractOffer(Integer recalculatedProbability) {
         this.probability = recalculatedProbability;
     }
 }

@@ -105,14 +105,15 @@ class ReunionLlmTest {
     }
 
     @Test
-    @DisplayName("POSSIBLE인데 유형이 없으면 INSUFFICIENT로 강등한다 — 대역 없는 확률 방지")
-    void parse_missingType_downgradesToInsufficient() {
+    @DisplayName("유형이 없어도 POSSIBLE을 유지한다 — 판은 확률 대역이 아니라 결정 호출이 만든다")
+    void parse_missingType_staysPossible() {
         ReunionDiagnosis diagnosis = diagnose("""
                 {"verdict": "POSSIBLE", "activeReunionOffer": false,
                  "userDumpedPartnerLingering": false, "factors": [], "reason": ""}
                 """);
 
-        assertThat(diagnosis.verdict()).isEqualTo(ReunionVerdict.INSUFFICIENT);
+        assertThat(diagnosis.verdict()).isEqualTo(ReunionVerdict.POSSIBLE);
+        assertThat(diagnosis.breakupType()).isNull();
     }
 
     @Test
@@ -183,8 +184,8 @@ class ReunionLlmTest {
                  "factors": [], "reason": ""}
                 """);
 
-        // verdict 기본값 POSSIBLE + 유형 미상 → 강등 경로를 타고 INSUFFICIENT가 된다
-        assertThat(diagnosis.verdict()).isEqualTo(ReunionVerdict.INSUFFICIENT);
+        // verdict 기본값 POSSIBLE. 유형 미상 강등 경로는 확률 대역과 함께 제거됐다.
+        assertThat(diagnosis.verdict()).isEqualTo(ReunionVerdict.POSSIBLE);
         assertThat(diagnosis.activeReunionOffer()).isFalse(); // 필드 누락 시 안전한 기본값
         assertThat(diagnosis.breakupType()).isNull();
     }
@@ -250,25 +251,4 @@ class ReunionLlmTest {
         org.mockito.Mockito.verify(llmClient, org.mockito.Mockito.times(1)).generateJsonDeep(anyList(), any());
     }
 
-    // 구조화 출력의 enum이 모델이 낼 수 있는 값을 강제한다. 여기 빠진 점프는 루브릭이 아무리
-    // 시켜도 못 나오고 목록에 있는 엉뚱한 값으로 밀려난다(실측: 장벽해소 판이 상대결혼약혼으로
-    // 찍혀 8%가 나왔다). JumpRule에 값을 더할 때 스키마가 자동으로 따라오는지 지킨다.
-    @org.junit.jupiter.api.Test
-    @DisplayName("스키마의 점프 후보는 JumpRule 전부를 담는다")
-    void jumpEnumCoversAllRules() {
-        Object schema = org.springframework.test.util.ReflectionTestUtils
-                .getField(ReunionLlm.class, "RESPONSE_SCHEMA");
-        @SuppressWarnings("unchecked")
-        var properties = (java.util.Map<String, Object>)
-                ((java.util.Map<String, Object>) schema).get("properties");
-        @SuppressWarnings("unchecked")
-        var jump = (java.util.Map<String, Object>) properties.get("jumpRule");
-        @SuppressWarnings("unchecked")
-        var labels = (java.util.List<String>) jump.get("enum");
-
-        assertThat(labels).containsExactlyInAnyOrderElementsOf(
-                java.util.Arrays.stream(com.threeam.assessment.entity.JumpRule.values())
-                        .map(com.threeam.assessment.entity.JumpRule::label).toList());
-        assertThat(labels).contains("장벽해소");
-    }
 }

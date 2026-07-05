@@ -4,33 +4,16 @@ import java.util.List;
 import java.util.Map;
 
 // 정밀 판독의 허용 어휘 사전. 스키마(생성 강제)와 파서(저장 전 검증)가 같은 목록을 쓴다.
-// state는 유저에게 노출되지 않는 내부 값 — 판독이 매번 다른 논리로 출렁이는 걸 막고,
-// 골든셋 회귀(사연 X의 정답 state)를 걸 수 있게 한다. 화면 문장은 answer가 담당한다.
 public final class ReadingVocab {
 
     private ReadingVocab() {
     }
 
-    // 상대의 지금 = 현재 지배적인 심리 상태
-    public static final List<String> NOW_STATES = List.of(
-            "EMOTIONAL_OVERWHELM", "RELATIONSHIP_RECONSIDERATION", "DETACHED", "MOVING_ON", "MIXED");
-
-    // 결심 강도 = 관계를 끝낸다는 선택의 견고함
-    public static final List<String> RESOLVE_STATES = List.of(
-            "IMPULSIVE", "UNSTABLE", "MODERATE", "FIRM");
-
-    // 남은 마음 = 애정과 미련의 잔존 정도. 재선택과 분리해서 본다.
-    public static final List<String> REMAIN_STATES = List.of(
-            "STRONG", "PRESENT", "WEAK", "LITTLE_EVIDENCE");
-
-    // 재선택 가능성 = 위 셋의 종합
-    public static final List<String> RESELECT_STATES = List.of(
-            "OPEN", "CONDITIONAL", "NARROW", "CLOSED_CURRENTLY");
-
-    // 장의 내부 역할 태그 — 장들이 서로 다른 판단축을 다뤘는지 점검하는 용도. 유저 비노출.
+    // 장의 역할 태그 — 채점용 메타데이터다. 유저 비노출이고 생성을 제어하지 않는다.
+    // 옛 9개는 한 목록에 분석 대상, 분석 방식, 수행 작업이 섞여 있어 분류 비용만 들었다.
+    // 판독 순서(궤적 -> 맞물림 -> 현재 상태, 필요할 때만 오해 교정)와 같은 축으로 줄였다.
     public static final List<String> CHAPTER_ROLES = List.of(
-            "CORE_CONTRADICTION", "SIGNAL_CORRECTION", "HIDDEN_SIGNAL", "DISTANCE_MEANING",
-            "FEELING_VS_CHOICE", "RESPONSIBILITY", "INTERACTION");
+            "TRAJECTORY", "INTERACTION", "CURRENT_STATE", "MISREAD_CORRECTION");
 
     // 진단 항목의 키와 화면 라벨. 요인 이름(대체자 등)이 그대로 겹치는 것도 있지만,
     // 이건 채점 슬롯이 아니라 "확률을 만든 진단"의 사용자 지면 어휘다 — 판독이 유저 언어로
@@ -73,4 +56,7 @@ public final class ReadingVocab {
     public static final List<String> STANCES = List.of(
             "WAIT_TO_BOUNDARY", "SHORT_COOLING_THEN_RECONTACT", "ONE_REPAIR_ATTEMPT",
             "USE_EXISTING_EVENT", "STOP_CONTACT", "HOLD_AND_REASSESS");
+
+    // 뒤늦은 후회 마크의 강도. 반대 증거가 남았으면 MODERATE, 여러 시점의 사실이 겹치면 STRONG.
+    public static final List<String> REGRET_STRENGTHS = List.of("MODERATE", "STRONG");
 }

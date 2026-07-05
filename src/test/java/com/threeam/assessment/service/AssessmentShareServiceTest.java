@@ -55,7 +55,7 @@ class AssessmentShareServiceTest {
     private Assessment assessment(Long id, Integer probability) {
         Assessment assessment = Assessment.builder()
                 .storyId(STORY_ID)
-                .verdict(probability != null ? ReunionVerdict.POSSIBLE : ReunionVerdict.DATING)
+                .verdict(probability != null ? ReunionVerdict.POSSIBLE : ReunionVerdict.REUNITED)
                 .probability(probability)
                 .typeEvidence("유형 근거")
                 .relapseRisk(RelapseRisk.HIGH)

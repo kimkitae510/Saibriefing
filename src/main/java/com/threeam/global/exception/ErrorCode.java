@@ -59,12 +59,14 @@ public enum ErrorCode {
 
     // 분석
     ASSESSMENT_NO_MESSAGES(HttpStatus.BAD_REQUEST, "AS001", "분석할 대화 내용이 없습니다."),
-    ASSESSMENT_NO_NEW_MESSAGES(HttpStatus.CONFLICT, "AS002",
-            "마지막 분석 이후 새로운 이야기가 없습니다. 대화를 나누거나 아래에서 사실을 직접 알려준 뒤 다시 분석해 주세요."),
+    // AS002(새 대화 없음 거부)는 폐지 — 같은 재료 재분석도 유저의 선택이고 후차감이라 비용은
+    // 본인이 진다. 코드 번호는 결번으로 남긴다.
     // AS003(새 사실 없음 거부)은 폐지 — temperature 0으로 출렁임이 해소됐고, 추출 누락 시
     // 분석의 자가 복구를 막는 부작용이 있었다. 코드 번호는 결번으로 남긴다.
-    ASSESSMENT_NOT_DATING(HttpStatus.CONFLICT, "AS004", "지금은 만나는 중으로 분석된 상태가 아닙니다."),
+    // DATING 상태 폐지로 이름을 잠금 일반형으로 — 지금 이 창구가 받는 잠금은 재회 성공뿐이다.
+    ASSESSMENT_NOT_LOCKED(HttpStatus.CONFLICT, "AS004", "지금은 재회 성공으로 분석된 상태가 아닙니다."),
     ASSESSMENT_NOT_OFFER(HttpStatus.CONFLICT, "AS005", "지금은 상대의 재회 제안으로 확정된 상태가 아닙니다."),
+    ASSESSMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "AS006", "분석을 찾을 수 없습니다."),
 
     // 분석 공유
     SHARE_NOT_FOUND(HttpStatus.NOT_FOUND, "SH001", "공유된 분석을 찾을 수 없습니다. 링크가 잘못되었거나 삭제된 이야기입니다."),

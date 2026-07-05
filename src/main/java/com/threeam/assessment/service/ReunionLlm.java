@@ -213,50 +213,33 @@ public class ReunionLlm {
     // 분석 응답의 문법을 생성 단계에서 강제하는 스키마. 프롬프트(rubric.yml)의 JSON 지시와 짝이며,
     // 루브릭을 고쳐 필드가 바뀌면 여기도 같이 고쳐야 한다 — 스키마에 없는 필드는 모델이 낼 수 없다.
     // propertyOrdering은 루브릭의 절차 순서와 맞춘다(판정 → 유형 → 요인 → 전망 → 관찰 → 총평).
+    // 접수 스키마 — 판정 기능(유형, 점프, 요인, 확률 재료)은 내렸다. 판은 이제 판독 뒤
+    // 결정 호출이 만든다. 스키마에서 빠지면 루브릭 본문이 남아 있어도 출력이 불가능하다
+    // (구조가 지시를 이긴다). 1호출이 남기는 것: 게이트, 사실, 질문, 해석, 매칭 프로필.
     private static final Map<String, Object> RESPONSE_SCHEMA = Map.ofEntries(
             Map.entry("type", "OBJECT"),
             Map.entry("properties", Map.ofEntries(
                     Map.entry("verdict", Map.of("type", "STRING",
                             "enum", List.of("POSSIBLE", "INSUFFICIENT", "DATING", "REUNITED"))),
                     Map.entry("activeReunionOffer", Map.of("type", "BOOLEAN")),
-                    Map.entry("breakupType", Map.of("type", "STRING", "nullable", true,
-                            "enum", BreakupType.labels())),
-                    Map.entry("typeEvidence", Map.of("type", "STRING", "nullable", true)),
-                    // 구조화 출력의 enum은 모델이 낼 수 있는 값을 강제한다 — 여기 빠진 점프는
-                    // 루브릭이 아무리 시켜도 못 나오고, 모델은 목록에 있는 엉뚱한 값으로 밀려난다
-                    // (실측: 장벽해소를 의도한 판이 상대결혼약혼으로 찍혀 8%가 나왔다).
-                    // JumpRule을 추가할 때 이 목록을 같이 고치는 걸 잊지 마라.
-                    Map.entry("jumpRule", Map.of("type", "STRING",
-                            "enum", java.util.Arrays.stream(JumpRule.values())
-                                    .map(JumpRule::label).toList())),
-                    Map.entry("factors", Map.of("type", "ARRAY", "items", factorItemSchema())),
-                    Map.entry("relapseRisk", relapseRiskSchema()),
-                    Map.entry("relationshipPsychology", relationshipPsychologySchema()),
                     Map.entry("watchFor", Map.of("type", "ARRAY", "items", watchItemSchema())),
                     Map.entry("unansweredQuestions", Map.of("type", "ARRAY",
                             "items", Map.of("type", "STRING"))),
                     Map.entry("matchProfile", matchProfileSchema()),
                     Map.entry("reason", Map.of("type", "STRING")),
                     Map.entry("newFacts", Map.of("type", "ARRAY", "items", Map.of("type", "STRING"))),
-                    // 정밀 판독(2호출) 재료 — 2호출은 원문을 다시 읽지 않으므로 채점과 무관하게
-                    // 사람에게 중요한 장면을 여기 보존한다. 지시 전문은 rubric.yml에 있다.
                     Map.entry("readingFacts", Map.of("type", "ARRAY", "items", readingFactSchema())),
                     Map.entry("directQuestions", Map.of("type", "ARRAY",
                             "items", Map.of("type", "STRING"))),
-                    Map.entry("userFocus", Map.of("type", "ARRAY", "items", userFocusSchema())),
-                    // 시간 효과와 화면 표시용 진단 — v4에서 1호출이 함께 확정한다.
-                    Map.entry("timeEffect", timeEffectSchema()),
-                    Map.entry("displayDiagnosis", displayDiagnosisSchema()))),
-            // 배열류와 유형은 필수에서 뺀다 — 잠금 판정(DATING 등)은 루브릭이 비우라고 지시하는데
+                    Map.entry("userFocus", Map.of("type", "ARRAY", "items", userFocusSchema())))),
+            // 배열류는 필수에서 뺀다 — 잠금 판정(DATING 등)은 루브릭이 비우라고 지시하는데
             // 필수로 걸면 억지로 채우게 된다.
             Map.entry("required", List.of("verdict", "activeReunionOffer",
-                    "jumpRule", "matchProfile", "relationshipPsychology", "reason")),
-            Map.entry("propertyOrdering", List.of("verdict", "activeReunionOffer", "breakupType",
-                    "typeEvidence", "jumpRule", "factors", "relapseRisk",
-                    "relationshipPsychology", "watchFor", "unansweredQuestions",
+                    "matchProfile", "reason")),
+            Map.entry("propertyOrdering", List.of("verdict", "activeReunionOffer",
+                    "watchFor", "unansweredQuestions",
                     "matchProfile", "reason", "newFacts",
-                    "readingFacts", "directQuestions", "userFocus",
-                    "timeEffect", "displayDiagnosis")));
+                    "readingFacts", "directQuestions", "userFocus")));
 
     private static Map<String, Object> timeEffectSchema() {
         return Map.of(
@@ -325,7 +308,10 @@ public class ReunionLlm {
                         "fact", Map.of("type", "STRING"),
                         "quote", Map.of("type", "STRING", "nullable", true),
                         "timing", Map.of("type", "STRING", "nullable", true)),
-                "required", List.of("actor", "kind", "fact"),
+                // quote/timing을 required에 올린다(nullable 유지 — 없으면 null). 루브릭이
+                // "반드시 보존"이라 지시해도 선택 필드면 안 쓰는 게 실측됐다(12회 중 12회 0).
+                // required면 fact마다 "인용할 원문이 있는가"를 한 번은 지나가게 된다.
+                "required", List.of("actor", "kind", "fact", "quote", "timing"),
                 "propertyOrdering", List.of("actor", "kind", "fact", "quote", "timing"));
     }
 
@@ -347,18 +333,11 @@ public class ReunionLlm {
                     ReunionVerdict.POSSIBLE);
             boolean activeReunionOffer = root.path("activeReunionOffer").asBoolean(false);
 
+            // 유형, 점프, 요인은 접수 스키마에서 내려 항상 비어 온다 — 판은 결정 호출이 만든다.
+            // 옛 "유형 없는 POSSIBLE 강등" 가드는 확률 대역 계산과 함께 사라졌다(있으면 전 판이 강등된다).
             BreakupType breakupType = BreakupType.fromLabel(root.path("breakupType").asText(null));
             JumpRule jumpRule = JumpRule.fromLabel(root.path("jumpRule").asText(null));
             List<FactorItem> factors = parseFactors(root);
-
-            // 유형 없는 POSSIBLE은 확률을 계산할 대역이 없다 — 근거 없는 확률을 유저에게 보이지 않게
-            // INSUFFICIENT로 강등한다. 예외 둘: 활성 재회 제안(100 확정), 점프 판(유형이 비어도
-            // 점프 대역만으로 계산된다 — 상대에게 귀속할 사실 없이 유저 사정으로 끝난 이별이 그 경로다).
-            if (verdict == ReunionVerdict.POSSIBLE && !activeReunionOffer && breakupType == null
-                    && jumpRule == JumpRule.NONE) {
-                log.warn("분석 유형 누락 — 근거 없는 확률 방지 위해 INSUFFICIENT로 강등");
-                verdict = ReunionVerdict.INSUFFICIENT;
-            }
 
             RelapseRisk relapseRisk = RelapseRisk.fromLabel(
                     root.path("relapseRisk").path("level").asText(null));
