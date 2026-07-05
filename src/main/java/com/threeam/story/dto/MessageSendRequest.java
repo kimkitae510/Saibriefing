@@ -14,10 +14,4 @@ public class MessageSendRequest {
     // 질문 수로 나눠 잡는다(ChatPage의 limit). 프론트 카운터(MAX_LENGTH)와 동일 값 유지.
     @Size(max = 2000, message = "메시지는 2000자까지 보낼 수 있습니다.")
     private String content;
-
-    // 추천 질문 칩에서 온 말이면 그 칩의 id. 자유입력이면 null이다 —
-    // 칩은 질문 범위를 제한하는 장치가 아니라 전문 프롬프트로 가는 지름길이라, 없어도 상담은 돈다.
-    // 카탈로그에 없는 값이면 서버가 무시하고 자유입력으로 다룬다(칩을 지운 뒤 열려 있던 화면).
-    @Size(max = 40, message = "칩 식별자가 너무 깁니다.")
-    private String chipId;
 }

@@ -1,6 +1,5 @@
 package com.threeam.story.controller;
 
-import com.threeam.chip.dto.ChipView;
 import com.threeam.story.dto.MessagePageResponse;
 import com.threeam.story.dto.MessageResponse;
 import com.threeam.story.dto.MessageRetryResponse;
@@ -88,13 +87,6 @@ public class StoryController {
         return ResponseEntity.ok(storyService.getMessagesSince(userId, storyId, after));
     }
 
-
-    // "다른 질문 보기" 전체 목록. 사연마다 고를 수 있는 칩이 달라 사연 경로 아래 둔다.
-    @GetMapping("/{storyId}/chips")
-    public ResponseEntity<List<ChipView>> getChips(@AuthenticationPrincipal Long userId,
-                                                   @PathVariable Long storyId) {
-        return ResponseEntity.ok(storyService.getChips(userId, storyId));
-    }
 
     // 첫 대화 전 기본 정보. submitted=false면 화면이 폼을 띄운다(아직 안 낸 사연).
     @GetMapping("/{storyId}/intake")
