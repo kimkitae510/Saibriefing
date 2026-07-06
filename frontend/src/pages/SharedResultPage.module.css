@@ -243,3 +243,13 @@
   color: var(--text-muted);
   font-size: 11.5px;
 }
+
+/* 게이지 한가운데 들어가는 등급. 숫자를 뺀 자리라 같은 자리, 같은 정렬을 쓰되
+   글자가 길어져(매우 높음) 크기를 줄인다 */
+.gaugeBandBig {
+  color: var(--text);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}

@@ -1,0 +1,178 @@
+/* 리포트 책 오버레이 — 채팅 위에 잠깐 겹치는 것이 아니라 책을 손에 쥐는 장면이다.
+   닫힌 표지가 가운데 서고, 누르면 표지가 왼쪽 등을 축으로 넘어가며(rotateY)
+   같은 자리의 본문이 화면 가득 펼쳐진다. 색은 앱 공용 변수만 쓴다. */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  background: rgba(8, 8, 10, 0.94);
+  animation: rb-fade 0.18s ease-out;
+}
+
+@keyframes rb-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* 닫기는 구석 하나 — 표지 위, 본문 위 어느 국면에서도 같은 자리에 있어야 한다 */
+.close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* 책 틀 — 닫혀 있을 땐 표지 크기로 가운데, 열리면 화면 전체로 커진다.
+   틀 자체가 커지는 이유: 표지만 돌리고 본문을 딴 데서 띄우면 화면 전환으로 읽힌다 */
+.book {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 234px;
+  height: 330px;
+  transform: translate(-50%, -50%);
+  perspective: 1200px;
+  transition:
+    width 0.5s cubic-bezier(0.3, 0.8, 0.3, 1),
+    height 0.5s cubic-bezier(0.3, 0.8, 0.3, 1),
+    top 0.5s cubic-bezier(0.3, 0.8, 0.3, 1),
+    left 0.5s cubic-bezier(0.3, 0.8, 0.3, 1),
+    transform 0.5s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+
+.bookOpen {
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transform: none;
+}
+
+/* 표지 — 왼쪽 등(spine)을 축으로 넘어간다. 넘어간 뒤에는 자리도 이벤트도 남기지 않는다 */
+.cover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 6px 12px 12px 6px;
+  background: linear-gradient(135deg, #26222c 0%, #1b1a20 60%, #17161b 100%);
+  color: var(--text);
+  cursor: pointer;
+  transform-origin: left center;
+  backface-visibility: hidden;
+  transition:
+    transform 0.65s cubic-bezier(0.5, 0, 0.3, 1),
+    opacity 0.3s ease 0.4s;
+}
+
+.cover:disabled {
+  cursor: default;
+}
+
+.bookOpen .cover {
+  transform: rotateY(-130deg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 책등 자리 — 왼쪽에 어두운 띠 하나로 접히는 축을 그린다 */
+.coverEdge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  border-radius: 6px 0 0 6px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.coverBrand {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  letter-spacing: 2px;
+}
+
+.coverTitle {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.coverHint {
+  margin-top: 14px;
+  color: var(--accent);
+  font-size: 12.5px;
+}
+
+/* 본문 장 — 열리기 전에는 표지 밑에 숨어 있고, 표지가 넘어가면 그 자리가 그대로 지면이 된다 */
+.page {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--bg);
+  opacity: 0;
+}
+
+.bookOpen .page {
+  overflow-y: auto;
+  border-radius: 0;
+  opacity: 1;
+  transition: opacity 0.35s ease 0.25s;
+  /* 닫기 버튼과 첫 제목이 겹치지 않게 — 판독 스크롤은 자체 여백이 없다 */
+  padding: 52px 18px 28px;
+}
+
+/* 분석이 아직 없는 방의 첫 장 — 빈 화면 대신 다음 행동이 놓인다 */
+.empty {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.emptyTitle {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.emptyBody {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 240px;
+}
+
+.emptyBtn {
+  margin-top: 10px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1a1a1d;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+}

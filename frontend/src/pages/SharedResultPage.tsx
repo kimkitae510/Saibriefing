@@ -13,6 +13,7 @@ import {
   psychRows,
 } from '../utils/assessmentView';
 import styles from './SharedResultPage.module.css';
+import { BRAND } from '../brand';
 
 const ARC_LEN = Math.PI * 120;
 
@@ -69,7 +70,7 @@ export function SharedResultPage() {
           </div>
           <div className={styles.footer}>
             <button className={styles.btnPrimary} onClick={() => navigate('/')}>
-              새벽 세시 시작하기
+              {BRAND} 시작하기
             </button>
           </div>
         </div>
@@ -157,7 +158,7 @@ export function SharedResultPage() {
     <PhoneFrame>
       <div className={styles.wrap}>
         <div className={styles.body}>
-          <div className={styles.brand}>새벽 세시</div>
+          <div className={styles.brand}>{BRAND}</div>
           <div className={styles.subTitle}>대화를 읽고 정리한 분석 결과</div>
 
           <div className={styles.gaugeWrap}>
@@ -173,14 +174,11 @@ export function SharedResultPage() {
               />
             </svg>
             <div className={styles.gaugeValue}>
-              <div className={styles.gaugeNum}>
-                {prob}
-                <span className={styles.gaugePct}>%</span>
-              </div>
+              {/* 분석 화면과 같은 원칙 — 숫자 대신 등급 */}
+              <div className={styles.gaugeBandBig}>{bandLabel(prob)}</div>
             </div>
           </div>
           <div className={styles.gaugeLabel}>재회 가능성</div>
-          <div className={styles.gaugeSub}>{bandLabel(prob)}</div>
 
           {result.reason && (
             <div className={styles.reasonCard}>

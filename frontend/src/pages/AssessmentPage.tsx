@@ -7,10 +7,8 @@ import { ReviewBlock } from '../components/ReviewBlock';
 import {
   confirmBreakup,
   getAssessments,
-  retractOffer,
   runAssessment,
   type AssessmentResponse,
-  type FactorView,
 } from '../api/assessment';
 import { getPickedCases, pickCases, type PickedCases } from '../api/match';
 import { getUsage } from '../api/usage';
@@ -19,32 +17,15 @@ import { createShare, getActiveShare, revokeShare } from '../api/share';
 import { extractErrorCode, extractErrorMessage } from '../api/client';
 import { formatListTime } from '../utils/datetime';
 import { useGoPayment } from '../utils/paymentOrigin';
-import { GAUGE_MAX, bandLabel } from '../utils/assessmentScale';
-import {
-  FACTOR_LABEL,
-  JUMP_CARD,
-  NO_EVIDENCE,
-  STAGE_LEVEL,
-  TYPE_CHIP,
-  TYPE_READING,
-  psychRows,
-} from '../utils/assessmentView';
 import styles from './AssessmentPage.module.css';
+import { BRAND } from '../brand';
 
-// 수치 계산 방식(범위, 단계 기준)은 화면에 공개하지 않는다 — "왜 80이 최대냐" 같은 질문만 만든다.
-
-const ARC_LEN = Math.PI * 120; // 반원 게이지 길이
-
-// 요인별 점수는 화면에 숫자로 보여주지 않는다 — 숫자는 백엔드 상수라 정밀해 보이지만
-// 유저에겐 합산 산수 검증거리만 된다. 방향(유리/불리)은 색으로, 무게는 순서로 말한다
-// (백엔드가 무게 순으로 내려준다).
-// 근거 없는 요인(중립 + "근거 없음")은 판정 카드 대신 "알려주면 정확해져요" 안내로 바꾼다
-// (NO_EVIDENCE는 공유 화면과 공용이라 utils/assessmentView에 있다).
-
-// 사례 메타 줄의 기간 표기: 8 → "8개월", 24 → "2년", 30 → "2년 6개월"
 // 답변 칸 상한. 원장 한 줄이 200자인데 질문을 앞에 붙여 저장하므로, 남는 47자 안에서
 // 질문을 줄인다 — 상한이 질문마다 달라지면 유저가 읽을 수 없는 숫자가 된다.
 const ANSWER_MAX = 150;
+
+// 게스트 잠금 미리보기의 장식 아크에만 쓴다(실데이터 게이지는 폐기됨)
+const ARC_LEN = Math.PI * 120;
 
 // 원장에 남길 한 줄. 답은 그대로 두고 넘치는 몫은 질문에서 던다 — 잘려야 할 쪽은
 // 유저가 쓴 말이 아니라 우리가 붙인 꼬리표다.
@@ -55,16 +36,6 @@ function factLine(ask: string, answer: string): string {
   return `${label} — ${answer}`;
 }
 
-// 요인별로 유저에게 물을 문구 — 부족 정보 안내에 쓴다.
-const FACTOR_ASK: Record<string, string> = {
-  상대신호: '이별 후 상대의 반응(연락, 차단, SNS)',
-  대체자: '상대에게 새로 만나는 사람이 있는지',
-  유저대처: '이별 후 내가 어떻게 했는지',
-  통보온도: '헤어지자던 순간 상대의 태도',
-  상대패턴: '예전에도 헤어졌다 다시 만난 적이 있는지',
-  관계자산: '얼마나 만났고 얼마나 깊었는지(공개 연애, 미래 얘기)',
-  접점: '다시 만날 접점이 있는지(약속, 같은 소속, 공통 지인)',
-};
 
 /* 로딩/분석 중 점 애니메이션 — 일러스트(달) 대신 쓰는 유일한 장식 */
 function Dots() {
@@ -156,7 +127,7 @@ export function AssessmentPage() {
   const [result, setResult] = useState<AssessmentResponse | null>(null);
   // 직전 분석의 확률 — 게이지 옆 "지난 분석보다 ±N" 표시용. 번복(잠금 해제, 제안 철회) 뒤에는
   // 비교 기준이 흐려져서 null로 지운다(엉뚱한 증감이 뜨는 것보다 안 뜨는 게 낫다).
-  const [prevProb, setPrevProb] = useState<number | null>(null);
+  const [, setPrevProb] = useState<number | null>(null);
   // 재진단 확률 이력(과거→현재). 2개 이상일 때만 판독 첫 장에 추세로 그린다 —
   // 실제 변화가 있을 때만 그래프가 값을 가진다.
   const [probHistory, setProbHistory] = useState<number[]>([]);
@@ -187,7 +158,6 @@ export function AssessmentPage() {
   // 새로 오므로 함께 비운다. id를 들고 있어야 지우기와 수정(교체)이 된다.
   const [answers, setAnswers] = useState<Record<number, { content: string; factId: number }>>({});
   const [confirming, setConfirming] = useState(false); // 헤어짐 확인 API 진행 중
-  const [retracting, setRetracting] = useState(false); // 제안 번복 API 진행 중
   const [copied, setCopied] = useState(false); // 공유 시트가 없어 클립보드로 복사된 판의 피드백
   const [sharing, setSharing] = useState(false); // 공유 토큰 발급 중(연타 방지)
   // 살아 있는 공유 링크가 있는지. 있으면 "공유 중" 줄과 취소 버튼을 그린다 —
@@ -199,9 +169,6 @@ export function AssessmentPage() {
   const [retryable, setRetryable] = useState(false);
   // 연속 실패 쿨다운의 남은 초(서버가 내려준 값에서 시작). 0이면 즉시 재시도 가능.
   const [cooldown, setCooldown] = useState(0);
-  // 판독 책 모드 — 방금 새로 만든 판독(첫 독서)만 장 넘김으로 연다. 재진입(저장분 조회)은
-  // 전체 스크롤. 완독 여부는 저장하지 않는다 — 세션이 끝나면 그냥 스크롤로 열리는 것으로 충분.
-  const [bookOpen, setBookOpen] = useState(false);
   const aliveRef = useRef(true);
 
   // 에러 배너(쿼터 소진, 재분석 거부 등)가 화면에 계속 남지 않게 잠시 뒤 스스로 사라진다.
@@ -310,22 +277,6 @@ export function AssessmentPage() {
     }
   }
 
-  async function handleRetractOffer() {
-    setRetracting(true);
-    try {
-      // 서버가 신호 재합산 값으로 되돌린 결과를 주므로, 그걸로 교체하면 게이지가 즉시 바뀐다.
-      const res = await retractOffer(storyId);
-      if (aliveRef.current) {
-        setResult(res);
-        setPrevProb(null);
-      }
-    } catch (e) {
-      if (aliveRef.current) setError(extractErrorMessage(e, '처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'));
-    } finally {
-      if (aliveRef.current) setRetracting(false);
-    }
-  }
-
   function refreshUsage() {
     getUsage()
       .then((u) => {
@@ -348,9 +299,9 @@ export function AssessmentPage() {
       const { token } = await createShare(storyId);
       setShared(true);
       const url = `${window.location.origin}/s/${token}`;
-      const text = `재회 가능성 ${result.probability}% (${bandLabel(result.probability)}) — 새벽 세시 분석 리포트`;
+      const text = `${BRAND} 재회 가능성 분석 리포트`;
       if (navigator.share) {
-        await navigator.share({ title: '새벽 세시', text, url });
+        await navigator.share({ title: BRAND, text, url });
       } else {
         await navigator.clipboard.writeText(`${text}\n${url}`);
         setCopied(true);
@@ -412,8 +363,6 @@ export function AssessmentPage() {
           if (res.probability != null) {
             setProbHistory((prev) => [...prev, res.probability as number].slice(-5));
           }
-          // 새 판독의 첫 독서만 책 모드 — 순서대로 읽는 경험은 갓 나온 판독에만 의미가 있다.
-          setBookOpen(!!res.reading);
           // 새 진단이라 매칭도 새로 돌려야 한다 — 저장은 진단 1건에 한 벌씩 묶인다.
           refreshPicked();
         }
@@ -483,7 +432,7 @@ export function AssessmentPage() {
       .then((all) => {
         if (!aliveRef.current) return;
         setResult(all[0] ?? null);
-        // 비교 기준은 "직전의 확률 있는 분석" — 사이에 낀 잠금 판정(DATING 등)은 건너뛴다.
+        // 비교 기준은 "직전의 확률 있는 분석" — 사이에 낀 잠금 판정(REUNITED)은 건너뛴다.
         setPrevProb(all.slice(1).find((a) => a.probability != null)?.probability ?? null);
         // 추세는 재진단이 쌓였을 때만 값이 있다 — 확률 있는 분석을 과거순으로.
         // 마지막 다섯 개만 본다: 그보다 길면 화면에서 한 줄로 안 읽힌다.
@@ -502,6 +451,17 @@ export function AssessmentPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storyId]);
+
+  // 채팅에서 문진 답변을 마치고 넘어온 진입(?run=1) — 로딩이 끝나면 바로 분석을 시작한다.
+  // 파라미터는 한 번 쓰고 지운다: 새로고침마다 분석이 다시 돌면 안 된다.
+  useEffect(() => {
+    if (loading) return;
+    if (new URLSearchParams(window.location.search).get('run') === '1') {
+      window.history.replaceState(null, '', window.location.pathname);
+      diagnose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
 
   const toChat = () => navigate(`/stories/${storyId}`);
 
@@ -550,6 +510,7 @@ export function AssessmentPage() {
             ? '분석을 만들지 못하는 상태가 이어지고 있습니다. 이번 분석은 차감되지 않았습니다'
             : '이번 분석은 차감되지 않았습니다'}
         </div>
+        {/* 실패 재시도는 같은 판이다 — 질문을 다시 묻지 않고 마지막 질문을 재사용한다 */}
         <button className={styles.retryBtn} onClick={diagnose} disabled={cooldown > 0}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
@@ -576,10 +537,14 @@ export function AssessmentPage() {
               <>
                 <div className={styles.stateTitle}>이야기를 읽고 있습니다</div>
                 <Dots />
+                {/* 단계 표시 — 긴 대기를 "지금 무엇을 하는 중"으로 바꾼다(서버 폴링 값).
+                    지난 단계는 문장이 남고, 아직인 단계는 흐리게 — 장식 없이 자리와 농도로만 */}
+                {/* 1호출이 사라져 단계는 하나다 — 단계 목록 대신 지금 하는 일 한 줄 */}
+                <div className={styles.progressSteps}>
+                  <div className={styles.stepNow}>사연 전체를 깊게 판독하고 리포트를 쓰고 있어요</div>
+                </div>
                 {/* 분석 LLM이 느릴 때 이탈해도 손해가 아니라는 안내 — 결과는 저장돼 재진입 시 보인다 */}
                 <div className={styles.stateBody}>
-                  지금까지의 대화에서 신호를 찾고 있습니다
-                  <br />
                   시간이 걸릴 수 있으며, 화면을 나가도 결과는 저장됩니다
                 </div>
               </>
@@ -674,8 +639,8 @@ export function AssessmentPage() {
                 대화는 그대로 이어지고, 분석 1회를 드려요
               </div>
               <div className={styles.lockPerks}>
-                {perk('재회 확률', '지금까지 나눈 대화를 읽고 재회 확률을 계산합니다')}
-                {perk('유리하게, 불리하게 작용한 요인', '무엇이 재회 확률을 올리고 내렸는지 근거와 함께 짚습니다')}
+                {perk('재회 가능성 등급', '지금까지 나눈 대화를 읽고 정해진 기준으로 등급을 매깁니다')}
+                {perk('유리하게, 불리하게 작용한 요인', '무엇이 등급을 올리고 내렸는지 근거와 함께 짚습니다')}
                 {perk('비슷한 실제 사례', '같은 구도의 사례가 재회에 성공했는지 실패했는지 보여줘요')}
               </div>
             </div>
@@ -750,88 +715,63 @@ export function AssessmentPage() {
   const metaDate = result.createdAt ? formatListTime(result.createdAt) : '방금';
 
   // INSUFFICIENT는 저장되지 않고 diagnose()에서 배너로 처리되므로 여기 도달하는 결과는
-  // POSSIBLE(확률), DATING/REUNITED(잠금 — 게이지 대신 전용 화면)뿐이다.
-  const dating = result.verdict === 'DATING';
+  // POSSIBLE(확률), REUNITED(잠금 — 게이지 대신 전용 화면)뿐이다.
+  // DATING 상태는 폐지 — 만나는 중 사연은 게이트가 INSUFFICIENT 안내로 처리한다.
   const reunited = result.verdict === 'REUNITED';
-  const locked = dating || reunited;
-  const prob = result.probability ?? 0;
-  const fill = (Math.min(prob, GAUGE_MAX) / GAUGE_MAX) * ARC_LEN;
-  const factors = result.factors ?? [];
-  // 이별 사유(유형)는 요인이 아니라 기본 구간을 정하는 1층이지만, 유저 눈엔 "가능성을
-  // 낮춘/올린 것" 중 가장 큰 항목이다 — 목록 맨 위에 합성 카드로 보여준다.
-  // 사실 줄은 LLM이 쓴 유형 판정 근거(typeEvidence)를 그대로 싣고, 판독 줄만 유형별 고정
-  // 문장(다른 카드와 같은 관찰문 결)으로 채운다 — 프론트가 지어낸 티가 나면 안 된다.
-  const typeRaises = result.breakupType === '충동형' || result.breakupType === '상황형';
-  // 유저가 통보한 이별은 유형 대신 상대의 미련 단계(점프)가 구간을 정한다 — 카드도 그 문법으로.
-  // (카드 사전들은 공유 페이지와 공용이라 utils/assessmentView로 옮겼다.)
-  const jumpCard = result.jumpRule ? JUMP_CARD[result.jumpRule] : undefined;
-  // 계산은 2층이다 — 유형이 대역을 정하고 점프가 그 대역을 끌어당긴다. 카드도 2장이어야 한다.
-  // 점프가 있으면 유형 카드를 대체하던 때는 바닥 대역 유형에서 낮춘 신호가 0개로 나왔다
-  // (실측: 환승형 + 상대접촉재개 = 42%인데 화면엔 올린 신호만 넷, 게다가 환승 사실이
-  // '유리' 카드의 근거로 붙었다).
-  // 카드 제목에 유형 이름을 괄호로 달지 않는다 — 루브릭이 LLM에게 금지한 내부 용어를
-  // (유저가 못 알아듣는다는 실측으로) 화면이 대신 출력하던 자리였다.
-  const typeItem: FactorView | null = result.breakupType
-    ? {
-        name: '이별 사유',
-        level: TYPE_CHIP[result.breakupType] ?? (typeRaises ? '유리' : '불리'),
-        evidence: result.typeEvidence ?? '',
-        rationale: TYPE_READING[result.breakupType] ?? null,
-        stage: null,
-      }
-    : null;
-  // 점프 카드는 근거 줄을 비운다 — typeEvidence는 유형 카드의 것이고 같은 문장을 두 장에
-  // 실으면 중복이다. 점프의 판독 문장이 이미 사실을 담고 있다.
-  const jumpItem: FactorView | null = jumpCard
-    ? { name: '이별 후 상황', level: jumpCard.level, evidence: '', rationale: jumpCard.reading, stage: null }
-    : null;
-  const heads = [typeItem, jumpItem].filter((i): i is FactorView => i != null);
-  const raises = (i: FactorView) => i.level === '유리' || i.level === '매우유리';
-  const shown = factors.map((f) => ({
-    ...f,
-    name: FACTOR_LABEL[f.name] ?? f.name,
-    level:
-      f.stage && (f.level === '불리' || f.level === '매우불리')
-        ? STAGE_LEVEL[f.stage] ?? f.level
-        : f.level,
-  }));
-  // 도움말은 "무겁게 본 것부터 위에 옵니다"라고 말한다. 그런데 백엔드가 내려주는 순서는
-  // 요인 슬롯의 폭 순서이고 실제 증감은 level이 절반을 가르므로, 그대로 두면 '불리'(-5)가
-  // '매우불리'(-8)보다 위에 오는 판이 생긴다 — 화면이 자기 설명을 어긴다. 정확한 증감까지는
-  // 프론트가 알 수 없지만(백엔드 상수를 복제하면 언젠가 어긋난다) 등급으로 묶는 것만으로
-  // 그 역전은 사라진다. sort는 안정 정렬이라 같은 등급 안에서는 백엔드 순서가 유지된다.
-  // 이별 사유와 이별 후 상황은 대역을 정하는 층이라 언제나 맨 위다.
-  const strong = (l: FactorView['level']) => (l === '매우불리' || l === '매우유리' ? 0 : 1);
-  const byWeight = (a: FactorView, b: FactorView) => strong(a.level) - strong(b.level);
-  const unfavorable = [
-    ...heads.filter((i) => !raises(i)),
-    ...shown.filter((f) => f.level === '불리' || f.level === '매우불리').sort(byWeight),
-  ];
-  const favorable = [
-    ...heads.filter(raises),
-    ...shown.filter((f) => f.level === '유리' || f.level === '매우유리').sort(byWeight),
-  ];
-  // 판단 근거가 없던 요인 — 카드 대신 "알려주면 정확해져요"로 뒤집어 다음 대화를 유도한다.
-  const missing = factors.filter((f) => f.level === '중립' && f.evidence === NO_EVIDENCE);
-  // 분석이 대화를 읽고 만든 질문을 우선 쓴다 — 요인 슬롯의 고정 문구("상대에게 새로 만나는
-  // 사람이 있는지")는 그 사연의 맥락이 하나도 안 담겨 빈칸 채우기로 읽힌다.
-  // 분석이 못 뽑았을 때만 고정 문구로 내려간다.
-  const asks: string[] = (result.unansweredQuestions?.length ?? 0) > 0
-    ? result.unansweredQuestions!
-    : missing.map((f) => FACTOR_ASK[f.name] ?? FACTOR_LABEL[f.name] ?? f.name);
-  const psych = psychRows(result.relationshipPsychology);
+  const locked = reunited;
+  // 요인, 유형, 점프, 게이지 계산은 폐기 — 판은 판독(decision)이 말한다.
+  const asks: string[] = result.unansweredQuestions ?? [];
   // 정밀 판독 — 확률 있는 일반 판정에만 붙는다(백엔드가 그렇게만 생성).
   // 판독 구조가 아직 바뀌는 중이라, 서버가 옛 형식의 본문을 내려보낼 수 있다. 리포트 하나가
   // 화면 전체를 날리지 않게(실측: 빈 화면) 그릴 수 있는 모양인지 확인하고 통과시킨다.
-  const candidate = !locked && prob < 100 ? (result.reading ?? null) : null;
-  const reading =
-    candidate?.report?.diagnosis?.length && candidate.report.actionPlan
-      ? candidate
-      : null;
-  // 책 모드 동안엔 아래 판정부(요인 카드, 심리, 사례 등)를 감춰 독서에 집중시킨다.
-  // 나가면(전체 보기, 완독) 판독 전문이 펼쳐지고 판정부도 되살아난다.
-  const bookFocus = bookOpen && reading != null;
-
+  // 다른 구조로 저장된 본문에는 analysisChapters가 없다 — 확인하지 않으면 옛 판독이 화면을
+  // 통째로 날린다(실측: 구조 개편 뒤 옛 본문에서 렌더 중 예외).
+  // 행동 계획은 필수가 아니다 — baseline 모드는 02만 만들고 03을 만들지 않는다.
+  const candidate = !locked ? (result.reading ?? null) : null;
+  // 그릴 수 있는 본문인지: 새 구조는 판정 카드(verdictBlocks)가 본체고 mind와 분석 장은
+  // 카드가 흡수해 비는 게 정상이다 — mind를 필수로 걸면 새 판독이 전부 실패로 보인다(실측).
+  // 옛 저장분은 분석 블록(prologueBlocks)이나 심층 장(analysisChapters)으로 판정한다.
+  const d = candidate?.report?.decision;
+  const hasBody =
+    (d?.verdictBlocks?.length ?? 0) > 0
+    || (d?.prologueBlocks?.length ?? 0) > 0
+    || Boolean(candidate?.report?.analysisChapters?.length);
+  const reading = d && hasBody ? candidate : null;
+  // 판독이 붙어야 하는 판인데 판독이 없다 — 실패했거나 구조 개편 전 본문이다.
+  // 진단만으로 그리던 구화면은 폐기됐다: 반쪽을 결과처럼 보여주면 안 된다.
+  // 실패는 무차감이라(백엔드 후차감) 다시 분석이 손해가 아니다.
+  if (!locked && !reading) {
+    return (
+      <PhoneFrame>
+        <div className={styles.wrap}>
+          <BackBar onBack={toChat} />
+          <div className={styles.state}>
+            {retryPanel ?? (
+              <>
+                <div className={styles.stateTitle}>분석이 완성되지 못했어요</div>
+                <div className={styles.stateBody}>
+                  심층 판독까지 만들지 못해 결과를 보여드리지 않아요.
+                  <br />
+                  이 분석은 차감되지 않았어요.
+                </div>
+              </>
+            )}
+          </div>
+          {remainingHint}
+          {!retryPanel && (
+            <div className={styles.footer}>
+              <button className={styles.btnGhost} onClick={toChat}>
+                대화로
+              </button>
+              <button className={styles.btnPrimary} onClick={diagnose}>
+                다시 분석
+              </button>
+            </div>
+          )}
+        </div>
+      </PhoneFrame>
+    );
+  }
   return (
     <PhoneFrame>
       <div className={styles.wrap}>
@@ -858,66 +798,19 @@ export function AssessmentPage() {
         <div className={styles.body}>
           <div className={styles.meta}>마지막 분석 {metaDate}</div>
 
-          {/* 재회 성공과 사귀는 중은 확률 화면이 아니다 — 게이지 대신 히어로 문법(같은 결)으로.
+          {/* 재회 성공은 확률 화면이 아니다 — 게이지 대신 히어로 문법(같은 결)으로.
               게이지에 반투명 덮개를 씌우던 잠금은 미완성 화면처럼 읽혔다(실측) */}
           {reunited ? (
             <div className={styles.reunitedHero}>
               <div className={styles.reunitedTitle}>다시 만나게 되었습니다</div>
               <div className={styles.reunitedSub}>
-                재회에 성공해 확률 분석은 여기까지입니다.
+                재회에 성공해 분석은 여기까지입니다.
                 <br />
                 이제 관계를 이어가는 대화로 함께합니다.
               </div>
             </div>
-          ) : dating ? (
-            <div className={styles.reunitedHero}>
-              <div className={styles.reunitedTitle}>지금은 만나는 중입니다</div>
-              <div className={styles.reunitedSub}>
-                재회 확률은 이별을 전제로 한 분석이라
-                <br />
-                헤어진 뒤에 다시 열려요.
-              </div>
-            </div>
-          ) : reading ? null : (
-            <>
-              <div className={styles.gaugeWrap}>
-                {/* 선을 가늘게(14→11) — 두꺼운 아크는 계기판 티가 난다. 수치는 숫자가 말하고 아크는 거든다
-                    판독이 있으면 이 게이지 히어로는 통째로 안 그린다 — 표지의 판정 문장이 주인공이고
-                    확률은 그 아래 보조 숫자로 붙는다(숫자를 먼저 크게 걸면 나머지 글이 전부
-                    그 숫자의 정당화로 읽힌다) */}
-                <svg width="280" height="150" viewBox="0 0 280 150">
-                  <path d="M20,138 A120,120 0 0 1 260,138" fill="none" stroke="#2a2a2e" strokeWidth="11" strokeLinecap="round" />
-                  <path
-                    d="M20,138 A120,120 0 0 1 260,138"
-                    fill="none"
-                    stroke="#B89DD1"
-                    strokeWidth="11"
-                    strokeLinecap="round"
-                    strokeDasharray={`${fill} ${ARC_LEN + 40}`}
-                  />
-                </svg>
-                <div className={styles.gaugeValue}>
-                  <div className={styles.gaugeNum}>
-                    {prob}
-                    <span className={styles.gaugePct}>%</span>
-                  </div>
-                </div>
-              </div>
-              <div className={styles.gaugeLabel}>재회 가능성</div>
-              {/* 직전 분석 대비 변화 — 정지 사진이던 결과에 흐름을 붙인다(전체 추이는 기록 화면) */}
-              {!dating && prevProb != null && prob < 100 && (
-                <div
-                  className={`${styles.deltaChip} ${
-                    prob > prevProb ? styles.deltaChipUp : prob < prevProb ? styles.deltaChipDown : ''
-                  }`}
-                >
-                  {prob === prevProb
-                    ? '지난 분석과 같습니다'
-                    : `지난 분석보다 ${prob > prevProb ? '+' : ''}${prob - prevProb}%`}
-                </div>
-              )}
-            </>
-          )}
+          ) : null}
+
           {reunited ? (
             <>
               {result.reason && <div className={styles.datingReason}>{result.reason}</div>}
@@ -926,7 +819,7 @@ export function AssessmentPage() {
                 <div className={styles.lockTitle}>혹시 다시 헤어지게 됐다면</div>
                 <div className={styles.lockAskRow}>
                   <span className={styles.lockAskText}>
-                    다시 헤어졌거나 분석이 잘못 판단한 경우 알려 주세요. 확률 분석을 다시 엽니다.
+                    다시 헤어졌거나 분석이 잘못 판단한 경우 알려 주세요. 분석을 다시 엽니다.
                   </span>
                   <button
                     className={styles.lockConfirmBtn}
@@ -938,54 +831,23 @@ export function AssessmentPage() {
                 </div>
               </div>
             </>
-          ) : dating ? (
-            <>
-              {/* 제목과 설명은 위 히어로가 말했으니 카드는 번복 창구만 — 중복 문장 제거 */}
-              <div className={styles.lockCard}>
-                <div className={styles.lockAskRowSolo}>
-                  <span className={styles.lockAskText}>
-                    분석이 잘못 판단한 경우 알려 주세요. 확률 분석을 다시 엽니다.
-                  </span>
-                  <button
-                    className={styles.lockConfirmBtn}
-                    onClick={handleConfirmBreakup}
-                    disabled={confirming}
-                  >
-                    {confirming ? '반영 중…' : '헤어진 것이 맞습니다'}
-                  </button>
-                </div>
-              </div>
-              {result.reason && <div className={styles.datingReason}>{result.reason}</div>}
-            </>
-          ) : prob >= 100 ? (
-            /* 100은 합산 결과가 아니라 "상대의 유효한 재회 제안" 확정값 — 사유 설명과 번복 창구를
-               커플 잠금과 같은 카드 문법으로 제공한다. 번복하면 아래 신호들의 합산으로 즉시 되돌아간다 */
-            <div className={styles.lockCard}>
-              <div className={styles.lockTitle}>상대의 재회 제안이 유효한 상태입니다</div>
-              <div className={styles.lockDesc}>
-                남은 것은 확률이 아니라 내 선택이라 100%로 보여드려요. 제안이 없던 일이 되면
-                저장해 둔 신호 기준으로 바로 다시 계산해 드려요.
-              </div>
-              <div className={styles.lockAskRow}>
-                <span className={styles.lockAskText}>
-                  제안이 무산되었거나 분석이 잘못 판단한 경우 알려 주세요.
-                </span>
-                <button
-                  className={styles.lockConfirmBtn}
-                  onClick={handleRetractOffer}
-                  disabled={retracting}
-                >
-                  {retracting ? '반영 중…' : '유효하지 않습니다'}
-                </button>
-              </div>
-            </div>
-          ) : reading ? null : (
-            <div className={styles.gaugeSub}>{bandLabel(prob)}</div>
+          ) : null}
+
+          {/* 정밀 판독 — 결론부터 행동 계획까지 세로 스크롤 문서 하나로 펼친다.
+              key는 판독이 바뀌면(재분석) 펼침 상태를 처음으로 되돌리기 위한 것 */}
+          {reading && (
+            <ReadingBook
+              key={result.createdAt ?? 'reading'}
+              reading={reading}
+              probability={result.probability}
+              history={probHistory}
+            />
           )}
 
           {/* 공유는 확률 결과에서만 — 잠금 판정(사귀는 중, 재회 성공)은 남에게 보일 내용이
-              아니다 */}
-          {!locked && !bookFocus && result.probability != null && (
+              아니다. 판독 아래에 둔다: 결론보다 공유 버튼이 먼저 나오면 읽기 전에 뿌리라는
+              화면이 된다 */}
+          {!locked && result.probability != null && (
             <div className={styles.shareRow}>
               <button className={styles.shareBtn} onClick={handleShare} disabled={sharing}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1028,134 +890,10 @@ export function AssessmentPage() {
             </div>
           )}
 
-          {/* 정밀 판독 — 첫 독서는 장 넘김, 이후엔 전 장이 세로로 펼쳐진다.
-              key는 판독이 바뀌면(재분석) 장 위치를 처음으로 되돌리기 위한 것 */}
-          {reading && (
-            <ReadingBook
-              key={result.createdAt ?? 'reading'}
-              reading={reading}
-              probability={result.probability}
-              history={probHistory}
-              book={bookFocus}
-              onExitBook={() => setBookOpen(false)}
-              onAskChat={(prefill) => navigate(`/stories/${storyId}`, { state: { prefill } })}
-            />
-          )}
-
-          {/* 확률 화면에도 총평을 싣는다 — 요인 조각들만으론 서사가 없어 숫자가 건조하게 남는다.
-              판독이 있으면 안 그린다: 판독의 총평(0장)이 이 자리를 대체한다 */}
-          {!locked && !reading && result.reason && (
-            <div className={styles.reasonCard}>
-              <div className={styles.reasonLabel}>총평</div>
-              {result.reason}
-            </div>
-          )}
-
-          {/* 요인 카드: 제목 / 사실 / 판독 이유(어두운 박스). 무게는 내려온 순서가 말한다.
-              제안 확정(100%)일 땐 숨긴다 — 수락만 남은 상태에 판정 셈이 떠 있으면 어색하다
-              (재회 성공 화면과 같은 원칙, 판정은 번복 대비로 저장만 유지) */}
-          {/* 요인 카드(낮춘/올린 신호)는 판독이 있으면 안 그린다 — 요인은 엔진의 채점 언어지
-              유저의 목차가 아니고, 스토리 중간에 검사 결과표가 끼면 독서가 깨진다.
-              판독이 없는 옛 결과에서만 기존 문법을 유지한다 */}
-          {!locked && !reading && prob < 100 && unfavorable.length > 0 && (
-            <>
-              <SectionHead title="가능성을 낮춘 신호" count={unfavorable.length} countClass={styles.weightMinus} />
-              <div className={styles.dedList}>
-                {unfavorable.map((f) => (
-                  <div className={styles.dedItem} key={f.name}>
-                    <div className={styles.dedTop}>
-                      <div className={styles.dedSignal}>{f.name}</div>
-                      <span className={`${styles.weightLabel} ${styles.weightMinus}`}>{f.level}</span>
-                    </div>
-                    {f.evidence && f.evidence !== NO_EVIDENCE && (
-                      <div className={styles.dedEvidence}>{f.evidence}</div>
-                    )}
-                    {f.rationale && <div className={styles.dedRationale}>{f.rationale}</div>}
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {!locked && !reading && prob < 100 && favorable.length > 0 && (
-            <>
-              <SectionHead title="가능성을 올린 신호" count={favorable.length} countClass={styles.weightPlus} />
-              <div className={styles.dedList}>
-                {favorable.map((f) => (
-                  <div className={styles.dedItem} key={f.name}>
-                    <div className={styles.dedTop}>
-                      <div className={styles.dedSignal}>{f.name}</div>
-                      <span className={`${styles.weightLabel} ${styles.weightPlus}`}>{f.level}</span>
-                    </div>
-                    {f.evidence && f.evidence !== NO_EVIDENCE && (
-                      <div className={styles.dedEvidence}>{f.evidence}</div>
-                    )}
-                    {f.rationale && <div className={styles.dedRationale}>{f.rationale}</div>}
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* 관계 심리 — 확률과 무관한 이해용 층. 잠금 판정(사귀는 중, 재회 성공)에도
-              보여준다: 확률이 아니라 관계 구조의 설명이라 어느 판에서도 유효하다.
-              어느 행을 그릴지(보류값 걸러내기)는 공유 화면과 공용 헬퍼가 정한다 */}
-          {/* 애착 유형 표는 판독이 있으면 안 그린다 — 한 번의 갈등으로 유형을 확정하는 건
-              근거 부족이고, 관계 상호작용은 판독의 "왜 멀어졌을까" 장이 사건으로 서술한다 */}
-          {!reading && psych.length > 0 && (
-            <>
-              <SectionHead title="우리 관계는 왜 힘들었을까" />
-              <div className={styles.dedList}>
-                {psych.map((row) => (
-                  <div className={styles.dedItem} key={row.name}>
-                    <div className={styles.dedTop}>
-                      <div className={styles.dedSignal}>{row.name}</div>
-                      <span className={`${styles.weightLabel} ${styles.weightNeutral}`}>
-                        {row.value}
-                      </span>
-                    </div>
-                    {row.description && (
-                      <div className={styles.dedRationale}>{row.description}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* 유지 전망 — 성사와 별개 축. 관계 심리 다음 자리라 "구조가 안 바뀌면 반복된다"로
-              서사가 이어진다. 데이터만 내려오고 화면에 없던 값을 이제 그린다 */}
-          {!locked && !reading && prob < 100 && result.relapseRisk && (
-            <>
-              <SectionHead title="다시 만나면 같은 문제가 반복될까" />
-              <div className={styles.dedList}>
-                <div className={styles.dedItem}>
-                  <div className={styles.dedTop}>
-                    <div className={styles.dedSignal}>재발 위험</div>
-                    <span
-                      className={`${styles.weightLabel} ${
-                        result.relapseRisk === '높음'
-                          ? styles.weightMinus
-                          : result.relapseRisk === '낮음'
-                            ? styles.weightPlus
-                            : styles.weightNeutral
-                      }`}
-                    >
-                      {result.relapseRisk}
-                    </span>
-                  </div>
-                  {result.relapseReason && (
-                    <div className={styles.dedRationale}>{result.relapseReason}</div>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-
           {/* 비슷한 사례 — 확률 대역이 구성의 상한을 정하고(낮으면 재회한 사례 1 + 못 한 사례 1,
               높으면 재회한 사례 2) 실제 장수는 고른 쪽이 정한다. 결과에 색을 입히지 않는 원칙은
               그대로다: 초록은 좋음, 회색은 나쁨으로 읽혀 남의 결말에 등급이 붙는다 */}
-          {!bookFocus && result && picked && (
+          {result && picked && (
             <>
               {/* 판독 뒤에 붙는 에필로그 — 판독의 질문 문법으로 제목을 잇는다 */}
               <SectionHead title={reading ? '나와 비슷한 관계는 어떻게 됐을까' : '비슷한 사례'} />
@@ -1256,7 +994,7 @@ export function AssessmentPage() {
               다음 분석을 위한 요청은 마지막이 자연스러운 독서 순서다 */
           }
           {/* 폼에 적으면 원장에 쌓이고 그것만으로 재분석 가드가 열린다(대화 횟수 차감 없음) */}
-          {!locked && !bookFocus && (
+          {!locked && asks.length > 0 && (
             <>
               {/* "앞으로 지켜볼 것"은 내렸다 — 상대가 먼저 연락하면 유리하다는 건 유저가 이미
                   아는 얘기라 자리값을 못 했고, 그 일이 실제로 생기면 대화에서 말하게 되어
@@ -1265,7 +1003,7 @@ export function AssessmentPage() {
               <SectionHead title="알려주시면 분석이 더 정확해져요" />
               <div className={styles.askNote}>대화 횟수는 차감되지 않고, 답변은 다음 분석에 반영됩니다.</div>
               <div className={styles.dedList}>
-                {(prob < 100 ? asks : []).map((ask, i) => {
+                {asks.map((ask, i) => {
                   const done = answers[i] != null;
                   const open = openAsk === i;
                   return (
@@ -1335,16 +1073,12 @@ export function AssessmentPage() {
           )}
 
           {/* 분석 평가 — 판독을 다 읽은 뒤가 평가할 수 있는 시점이라 맨 아래.
-              잠금 판정(DATING 등)도 평가 대상이다: 오판이면 그게 골든셋 재료다 */}
-          {!bookFocus && (
-            <ReviewBlock storyId={storyId} resultKey={result.createdAt ?? ''} onRewarded={refreshUsage} />
-          )}
+              잠금 판정(REUNITED)도 평가 대상이다: 오판이면 그게 골든셋 재료다 */}
+          <ReviewBlock storyId={storyId} resultKey={result.createdAt ?? ''} onRewarded={refreshUsage} />
 
         </div>
 
-        {/* 잔여 줄은 body(스크롤) 밖에 둬서 스크롤과 무관하게 하단에 고정한다 — 채팅처럼 항상 보이게.
-            책 모드 동안엔 하단 줄과 재분석 버튼도 감춘다 — 독서 중의 유일한 동선은 다음 장이다 */}
-        {!bookFocus && (
+        {/* 잔여 줄은 body(스크롤) 밖에 둬서 스크롤과 무관하게 하단에 고정한다 — 채팅처럼 항상 보이게 */}
         <>
         <div className={styles.hintRow}>
           <div className={styles.hintCount}>
@@ -1377,7 +1111,6 @@ export function AssessmentPage() {
           </button>
         </div>
         </>
-        )}
 
         {showHelp && (
           <HelpModal
@@ -1386,23 +1119,19 @@ export function AssessmentPage() {
             sections={[
               {
                 heading: '재회 가능성',
-                text: '대화와 기록된 사실을 근거로 "상대가 돌아올 가능성"을 봅니다. 어떤 이유로 헤어졌는지가 먼저 큰 틀을 정하고, 그 안에서 이별 후 벌어진 일들이 숫자를 올리거나 내립니다. 대화가 쌓이거나 새로운 일이 생긴 뒤 다시 분석하면 숫자도 다시 계산됩니다.',
+                text: '대화에서 확인된 상대의 마음과 행동, 두 사람의 관계를 근거로, 이 관계가 실제로 다시 시작될 가능성을 다섯 단계로 판정합니다. 재회를 바라고 오신 것을 전제로 가능성을 예측하는 것이지, 재회를 권하거나 말리는 판단이 아닙니다. 다시 다가갈지, 언제 어떻게 움직일지는 행동 계획과 대화에서 함께 정합니다.',
               },
               {
-                heading: '숫자를 믿어도 되나요',
-                text: '들려주신 이야기 안에서의 판단입니다. 말하지 않은 사실은 반영되지 않고, 같은 상황에서도 사람마다 결말은 달라집니다. 확정된 예언이 아니라 지금 어디쯤 서 있는지를 보는 눈금으로 봐 주세요.',
+                heading: '등급을 믿어도 되나요',
+                text: '들려주신 이야기 안에서의 판단입니다. 말하지 않은 사실은 반영되지 않고, 새로운 일이 생기거나 더 들려주신 뒤 다시 분석하면 판정도 다시 계산됩니다. %숫자는 쓰지 않습니다 — 사람 관계는 1% 단위로 잴 수 있는 것이 아니라서, 정직한 해상도인 다섯 단계로만 말합니다.',
               },
               {
-                heading: '100%가 뜨는 경우',
-                text: '상대가 재회 의사를 실제로 나에게 밝힌 경우입니다. 남은 것은 내 마음이기 때문입니다. 제안이 없던 일이 되면 다시 내려갑니다.',
+                heading: '판을 만든 이유',
+                text: '등급 아래에 그 판정을 만든 이유들이 근거와 함께 붙습니다. 판을 정한 쪽 이유가 먼저 오고, 반대 방향 근거가 실제로 있으면 그 이유도 함께 보여드립니다. 이야기에 근거가 없는 항목은 카드로 만들지 않습니다.',
               },
               {
-                heading: '가능성을 움직인 신호',
-                text: '가능성을 올린 신호와 낮춘 신호를 근거와 함께 보여드려요. 각 신호는 매우유리에서 매우불리까지로 판정되고, 무겁게 본 것부터 위에 옵니다. 근거가 없어 판단하지 못한 항목은 맨 아래 "더 알려주시면 정확해져요"에 모아 둡니다.',
-              },
-              {
-                heading: '더 알려주시면 정확해져요',
-                text: '맨 아래 카드입니다. 아직 근거가 없어 판단하지 못한 항목을 모아 둔 곳으로, 알려주시면 다음 분석에서 그 판정이 채워집니다. 대화에서 말해도 되고, 그 카드의 입력칸에 한 줄로 적어두셔도 반영됩니다. 적는 것은 대화 횟수가 차감되지 않습니다.',
+                heading: '알려주시면 정확해져요',
+                text: '분석이 물었는데 답이 없던 질문이 있으면 아래에 모아 둡니다. 대화에서 말해도 되고, 그 카드의 입력칸에 한 줄로 적어두셔도 다음 분석에 반영됩니다. 적는 것은 대화 횟수가 차감되지 않습니다.',
               },
               {
                 heading: '분석 횟수',

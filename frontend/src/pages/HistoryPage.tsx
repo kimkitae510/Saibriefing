@@ -149,7 +149,6 @@ export function HistoryPage() {
                       : null;
                   return (
                     <div className={styles.row} key={i}>
-                      <span className={styles.rowProb}>{a.probability}%</span>
                       <div className={styles.rowMid}>
                         <div className={styles.rowDate}>{longDateTime(a.createdAt)}</div>
                         <div className={styles.rowBand}>{bandLabel(a.probability ?? 0)}</div>

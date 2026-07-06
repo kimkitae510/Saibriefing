@@ -87,8 +87,8 @@
    묻힌다. 색은 아이콘에만 준다(위 규칙 그대로). 서랍은 흰 아이콘으로 남겨 대비를 만든다.
    composes로 회색 칩을 물려받는 구조라 svg 색은 클래스로 따로 건다 — 선택자 순서에 기대면
    나중에 규칙이 하나 끼는 순간 서랍까지 라벤더가 된다.
-   안내 줄 버튼(diagHintBtn)의 아이콘도 같은 라벤더다. 그 줄은 한 번 뜨고 사라지므로
-   두 아이콘이 같은 색이어야 "저 위에 있는 그것"이라는 연결이 남는다 */
+   도착 카드(reportIcon)의 아이콘도 같은 라벤더다 — 분석으로 가는 입구끼리 색이 같아야
+   "저 위에 있는 그것"이라는 연결이 남는다 */
 .diagIcon {
   color: var(--accent);
 }
@@ -118,10 +118,9 @@
   margin-bottom: 6px;
 }
 
-/* 분석 입구 — 방금 읽은 답변 다음 자리에 두는 건 그대로(시선이 이미 가 있는 곳). 다만
-   테두리 두른 상자 + 폭을 다 먹는 라벤더 버튼은 말풍선 리듬을 끊고 배너로 읽혔다. 배경도
-   상담자 풍선과 같은 --card라 모서리만 다른 풍선처럼 보였다.
-   날짜 구분선과 같은 문법으로 내려앉히고, 누를 것은 알약 하나만 남긴다.
+/* 분석 입구 — 방금 읽은 답변 다음 자리에 두는 건 그대로(시선이 이미 가 있는 곳).
+   안내 줄 + 알약 버튼에서 도착 카드 한 장으로 바꿨다 — 받으러 가는 것이 아니라
+   도착한 것을 펼치는 문법이라, 누르면 화면 이동 없이 그 자리에서 책이 열린다.
    노출 조건은 그대로 — 방당 1회, 분석 이력이 없을 때만 */
 .diagHint {
   margin: 18px 0 8px;
@@ -132,42 +131,59 @@
   animation: dh-in 0.3s ease-out;
 }
 
-/* 가운데 글, 좌우로 뻗는 실선 — 이 줄이 대화가 아니라 화면의 말이라는 표시 */
-.diagHintLine {
+/* 도착 카드 — 말풍선도 배너도 아닌 "받은 것" 한 장. 누르는 면 전체가 입구다.
+   색은 아이콘에만(위 규칙 그대로) — 카드까지 라벤더면 광고로 읽힌다 */
+.reportCard {
   width: 100%;
+  max-width: 300px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.reportIcon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(184, 157, 209, 0.14);
+  color: var(--accent);
+}
+
+.reportTexts {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reportTitle {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+.reportSub {
   color: var(--text-muted);
   font-size: 11.5px;
 }
 
-.diagHintLine::before,
-.diagHintLine::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
-/* 헤더 분석 칩과 같은 중립 칩 문법 — 색은 아이콘에만. 알약인 건 대화 흐름 밖이라는 표시 */
-.diagHintBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 16px;
-  border: none;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
-  cursor: pointer;
-}
-
-.diagHintBtn svg {
+.reportOpen {
+  flex-shrink: 0;
   color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 @keyframes dh-in {
@@ -354,15 +370,12 @@
   clip-path: polygon(0 0, 0 100%, 100% 0);
 }
 
+/* 위치와 배경은 msgRow + bubble/assistant가 잡는다 — 여기선 점 배치만 */
 .typing {
-  align-self: flex-start;
-  margin-left: 40px; /* 프사 폭 + 행 간격 — 말풍선 왼끝과 맞춘다 */
-  background: var(--card);
-  border-radius: 20px;
-  padding: 15px 18px;
   display: flex;
   gap: 6px;
   align-items: center;
+  padding: 15px 18px;
 }
 
 /* 상단 우측: 분석 버튼 + 도움말 */
