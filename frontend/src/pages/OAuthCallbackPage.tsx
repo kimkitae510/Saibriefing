@@ -6,6 +6,7 @@ import { confirmOAuthSwitch, oauthLogin, SIGNUP_CONSENTS, type OAuthProvider } f
 import { extractErrorMessage } from '../api/client';
 import { consumeStoredState } from '../utils/socialAuth';
 import styles from './LoginPage.module.css';
+import { BRAND } from '../brand';
 
 // 카카오/네이버 인가 후 도착지. 코드를 서버로 넘겨 토큰을 받고 목록으로 보낸다.
 export function OAuthCallbackPage() {
@@ -81,7 +82,7 @@ export function OAuthCallbackPage() {
     <PhoneFrame>
       <div className={styles.body}>
         <div className={styles.brand}>
-          <div className={styles.title}>3am</div>
+          <div className={styles.title}>{BRAND}</div>
           <div className={styles.subtitle}>
             {error ? '로그인에 문제가 생겼습니다.' : switchTicket ? '확인이 필요합니다.' : '로그인하는 중입니다…'}
           </div>
@@ -97,7 +98,7 @@ export function OAuthCallbackPage() {
         {switchTicket && (
           <SwitchConfirmSheet
             title="이미 가입된 계정입니다"
-            message="이 소셜 계정은 이미 3am 회원입니다. 이 계정으로 로그인하면 지금까지 게스트로 나눈 대화는 가져올 수 없습니다."
+            message={`이 소셜 계정은 이미 ${BRAND} 회원입니다. 이 계정으로 로그인하면 지금까지 게스트로 나눈 대화는 가져올 수 없습니다.`}
             confirmLabel="게스트 대화 포기하고 로그인"
             submitting={switching}
             onConfirm={() => void handleConfirmSwitch()}

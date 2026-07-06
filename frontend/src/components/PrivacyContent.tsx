@@ -1,5 +1,6 @@
 import styles from './TermsContent.module.css';
 import { CONTACT_OPENCHAT_URL } from './HelpModal';
+import { BRAND } from '../brand';
 
 // 개인정보처리방침 본문. 가입 동의 오버레이와 /privacy 페이지가 같은 내용을 쓰도록 하나로 모은다.
 // 문서 스타일은 약관과 동일해야 해서 TermsContent.module.css를 그대로 쓴다.
@@ -9,7 +10,7 @@ export function PrivacyContent() {
     <div className={styles.content}>
       <div className={styles.section}>개인정보처리방침</div>
       <p className={styles.para}>
-        3am(이하 "서비스")는 이용자의 개인정보를 소중히 다루며, 개인정보 보호법 등 관계
+        {BRAND}(이하 "서비스")는 이용자의 개인정보를 소중히 다루며, 개인정보 보호법 등 관계
         법령을 지킵니다. 이 방침은 서비스가 어떤 정보를 왜 모으고, 어떻게 쓰고 지키며, 언제
         지우는지를 설명합니다.
       </p>

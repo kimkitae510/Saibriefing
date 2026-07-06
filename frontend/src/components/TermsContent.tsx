@@ -1,5 +1,6 @@
 import styles from './TermsContent.module.css';
 import { CONTACT_OPENCHAT_URL } from './HelpModal';
+import { BRAND } from '../brand';
 
 // 약관/면책 본문. 회원가입 오버레이와 /terms 페이지가 같은 내용을 쓰도록 하나로 모은다.
 // 법적 성격의 문서라 전체 습니다 체 고정.
@@ -9,7 +10,7 @@ export function TermsContent() {
       <div className={styles.section}>면책 고지</div>
       <div className={styles.noticeBox}>
         <p className={styles.para}>
-          3am의 대화와 분석 리포트는 이용자가 들려준 이야기를 근거로 만들어지는
+          {BRAND}의 대화와 분석 리포트는 이용자가 들려준 이야기를 근거로 만들어지는
           참고 정보입니다. 화면에 표시되는 수치는 입력한 내용을 정해진 기준으로 정리한
           결과이며, 미래를 예측하거나 실제 결과를 보장하지 않습니다.
         </p>
@@ -27,7 +28,7 @@ export function TermsContent() {
 
       <div className={styles.clauseTitle}>제1조 (목적)</div>
       <p className={styles.para}>
-        이 약관은 3am(이하 "서비스")의 이용 조건과 운영에 관한 기본적인 사항을
+        이 약관은 {BRAND}(이하 "서비스")의 이용 조건과 운영에 관한 기본적인 사항을
         정합니다.
       </p>
 

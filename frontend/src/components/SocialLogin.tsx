@@ -11,6 +11,7 @@ import { extractErrorMessage } from '../api/client';
 import { redirectUriFor, startSocialLogin } from '../utils/socialAuth';
 import naverIconUrl from '../assets/naver-login.png';
 import styles from './SocialLogin.module.css';
+import { BRAND } from '../brand';
 
 // 소셜은 첫 로그인이 곧 가입이라 인가로 넘어가기 전에 동의를 받는다.
 // 이 기기에서 한 번 동의했으면 다음부터 시트를 생략한다(서버는 신규 가입일 때만 검사).
@@ -246,7 +247,7 @@ export function SocialLogin({
       {switchTicket && (
         <SwitchConfirmSheet
           title="이미 가입된 계정입니다"
-          message="이 소셜 계정은 이미 3am 회원입니다. 이 계정으로 로그인하면 지금까지 게스트로 나눈 대화는 가져올 수 없습니다."
+          message={`이 소셜 계정은 이미 ${BRAND} 회원입니다. 이 계정으로 로그인하면 지금까지 게스트로 나눈 대화는 가져올 수 없습니다.`}
           confirmLabel="게스트 대화 포기하고 로그인"
           submitting={switching}
           onConfirm={() => void handleConfirmSwitch()}

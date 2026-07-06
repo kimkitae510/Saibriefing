@@ -6,6 +6,7 @@ import { PrivacyContent } from '../components/PrivacyContent';
 import { requestEmailVerification, signup, SIGNUP_CONSENTS } from '../api/auth';
 import { extractErrorMessage } from '../api/client';
 import styles from './LoginPage.module.css';
+import { BRAND } from '../brand';
 
 const RESEND_COOLDOWN_SECONDS = 60; // 서버 쿨다운과 동일 — UI에서 먼저 눌러볼 일이 없게
 
@@ -111,7 +112,7 @@ export function SignupPage() {
         </button>
         <div className={styles.brand}>
           <div className={styles.title}>회원가입</div>
-          <div className={styles.subtitle}>이메일로 3am 회원가입</div>
+          <div className={styles.subtitle}>이메일로 {BRAND} 회원가입</div>
         </div>
 
         <div className={styles.fields}>

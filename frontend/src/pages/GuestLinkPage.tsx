@@ -11,6 +11,7 @@ import { SwitchConfirmSheet } from '../components/SwitchConfirmSheet';
 import { extractErrorMessage } from '../api/client';
 import { redirectUriFor, startSocialLogin } from '../utils/socialAuth';
 import styles from './LoginPage.module.css';
+import { BRAND } from '../brand';
 
 // 로그인 화면과 같은 키 — 이 기기에서 한 번 동의했으면 다시 묻지 않는다.
 const SOCIAL_CONSENT_KEY = 'social-consent-v1';
@@ -143,7 +144,7 @@ export function GuestLinkPage() {
             다시 닿을 수 없다. 이미 회원인데 게스트로 시작해버린 사람에게는 이 화면이 자기
             계정으로 돌아가는 유일한 문인데, 제목이 "계정 연결하기"라 자기 문인 줄 모른다 */}
         <div className={styles.linkBack}>
-          이미 3am 계정이 있으시다면 그 소셜을 눌러 주세요. 연결 대신 원래 계정으로 로그인됩니다.
+          이미 {BRAND} 계정이 있으시다면 그 소셜을 눌러 주세요. 연결 대신 원래 계정으로 로그인됩니다.
         </div>
 
         <div className={`${styles.error} ${styles.landError}`}>{error}</div>
@@ -244,7 +245,7 @@ export function GuestLinkPage() {
         {switchTicket && (
           <SwitchConfirmSheet
             title="이미 가입된 계정입니다"
-            message="이 소셜 계정은 이미 3am 회원입니다. 연결이 아니라 그 계정으로 로그인하게 되며, 지금까지 게스트로 나눈 대화는 가져올 수 없습니다."
+            message={`이 소셜 계정은 이미 ${BRAND} 회원입니다. 연결이 아니라 그 계정으로 로그인하게 되며, 지금까지 게스트로 나눈 대화는 가져올 수 없습니다.`}
             confirmLabel="게스트 대화 포기하고 로그인"
             submitting={switching}
             onConfirm={() => void handleConfirmSwitch()}
