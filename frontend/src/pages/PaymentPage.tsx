@@ -29,7 +29,10 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELED: '환불 완료',
 };
 
+// MATCH(비슷한 사례)는 분석 리포트에 들어가는 내용이라 목록에 세지 않는다 —
+// 라벨이 없으면 enum 이름이 화면에 그대로 새어 나온다(실측: "분석 1회 + MATCH 1회").
 const KIND_LABEL: Record<string, string> = { CHAT: '대화', ASSESSMENT: '분석' };
+const HIDDEN_KINDS = new Set(['MATCH']);
 
 // 토스 SDK는 외부 스크립트라 필요할 때(실결제 모드) 한 번만 끼워 넣는다.
 function loadTossSdk(): Promise<any> {
@@ -282,7 +285,10 @@ export function PaymentPage() {
   }
 
   function grantsText(p: { grants: { kind: string; count: number }[] }): string {
-    return p.grants.map((g) => `${KIND_LABEL[g.kind] ?? g.kind} ${g.count}회`).join(' + ');
+    return p.grants
+      .filter((g) => !HIDDEN_KINDS.has(g.kind))
+      .map((g) => `${KIND_LABEL[g.kind] ?? g.kind} ${g.count}회`)
+      .join(' + ');
   }
 
   // 이용권은 대화방, 분석, 서랍 등 여러 자리에서 들어온다. '/stories'로 돌려보내면 통로가

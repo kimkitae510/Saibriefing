@@ -71,7 +71,7 @@ class PaymentTxServiceTest {
     }
 
     @Test
-    @DisplayName("반영 - DONE 결과는 승인 확정과 묶음 이용권 지급(대화+진단)을 함께 처리한다")
+    @DisplayName("반영 - DONE 결과는 승인 확정과 묶음 이용권 지급(분석+매칭)을 함께 처리한다")
     void apply_doneGrantsAllEntitlements() {
         Payment inProgress = payment(PaymentStatus.IN_PROGRESS);
         given(paymentRepository.findByOrderIdForUpdate("order-1")).willReturn(Optional.of(inProgress));
@@ -84,11 +84,11 @@ class PaymentTxServiceTest {
         assertThat(inProgress.getStatus()).isEqualTo(PaymentStatus.DONE);
         assertThat(inProgress.getMethod()).isEqualTo("카드");
         ArgumentCaptor<Entitlement> captor = ArgumentCaptor.forClass(Entitlement.class);
-        verify(entitlementRepository, times(3)).save(captor.capture());
+        // 채팅 회차는 팔지 않는다(선불 회차가 계정에 쌓이면 미이행 채무 — PaymentItem 참고).
+        verify(entitlementRepository, times(2)).save(captor.capture());
         assertThat(captor.getAllValues())
                 .extracting(Entitlement::getKind, Entitlement::getTotalCount, Entitlement::getPaymentId)
                 .containsExactlyInAnyOrder(
-                        org.assertj.core.groups.Tuple.tuple(UsageKind.CHAT, 5, 100L),
                         org.assertj.core.groups.Tuple.tuple(UsageKind.ASSESSMENT, 1, 100L),
                         org.assertj.core.groups.Tuple.tuple(UsageKind.MATCH, 1, 100L));
     }
@@ -106,7 +106,7 @@ class PaymentTxServiceTest {
         service.applyPgResult("order-1", done);
 
         assertThat(expired.getStatus()).isEqualTo(PaymentStatus.DONE);
-        verify(entitlementRepository, times(3)).save(any());
+        verify(entitlementRepository, times(2)).save(any());
     }
 
     @Test
