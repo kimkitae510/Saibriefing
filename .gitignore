@@ -21,11 +21,21 @@ out/
 application-local.yml
 application-secret.yml
 persona*.yml
+goals*.yml
 reminder.yml
 extractor.yml
 rubric*.yml
 reading*.yml
 chip-*.yml
+
+### 루트의 md, yml, py는 전부 서비스 자산이나 로컬 메모다 — 통째로 제외 (하위 폴더의 README, application*.yml은 무관) ###
+/*.md
+/*.yml
+/*.yaml
+/*.py
+__pycache__/
+.claude/skills/
+skills-lock.json
 
 ### AI 작업 안내 / 로컬 전용 문서 (커밋 제외) ###
 CLAUDE.md
@@ -61,7 +71,9 @@ logs/
 프로젝트-해설.md
 매칭오판.md
 골든셋*.md
-테스트사연.md
+사례커버리지.md
+솔루션참고*.md
+테스트사연*.md
 연구노트.md
 운영설정.md
 운영명세.md
@@ -76,3 +88,28 @@ kakaotalk_sharing_btn_small_ov.png
 reading_*.md
 assessment_rubric_*.md
 persona_v*.md
+판독입출력*.md
+정밀판독*.md
+회귀테스트*.md
+채팅프롬프트*.md
+reading-미니멀전-백업.yml
+logs/last-reading-packet.txt
+자유판독.py
+사연.txt
+자유판독2.py
+사연594.txt
+사연5년.txt
+판독시행착오.md
+리포트개편.md
+결심사산출물.md
+원석*.txt
+판정배치.py
+판정배치결과.md
+reading-교본6개-백업.txt
+reading-sol통과판-백업.txt
+판독심리근거.md
+2장조사.md
+조사/
+재회기준.md
+재회유형.md
+reading-보관.yml
