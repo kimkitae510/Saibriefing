@@ -4,19 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.threeam.chip.ChipMatcher;
-import com.threeam.chip.ChipStore;
 import com.threeam.global.exception.ErrorCode;
 import com.threeam.global.exception.custom.BusinessException;
 import com.threeam.global.exception.custom.RetryAfterException;
-import com.threeam.llm.LlmClient;
+import com.threeam.llm.ChatGoalProperties;
 import com.threeam.story.dto.MessagePageResponse;
 import com.threeam.story.dto.MessageResponse;
 import com.threeam.story.dto.MessageRetryResponse;
@@ -67,7 +65,10 @@ class StoryServiceTest {
     private ReplyLinter replyLinter;
 
     @Mock
-    private LlmClient llmClient;
+    private ChatLlm chatLlm;
+
+    @Mock
+    private GoalJudge goalJudge;
 
     @Mock
     private UsageLimiter usageLimiter;
@@ -87,23 +88,17 @@ class StoryServiceTest {
         }
     }
 
-    @Mock
-    private ChipStore chipStore;
-
-    // 자유입력 판별. 기본 스텁이 null이라 명시적으로 완료된 future를 준다 —
-    // 이게 없으면 상담 호출이 매달린 체인이 시작되지 않는다.
-    @Mock
-    private ChipMatcher chipMatcher;
-
     @InjectMocks
     private StoryService storyService;
 
-    // 판별은 자유입력 턴에만 도는 부가 단계라, 여기 테스트들은 "이미 끝난 것"으로 두고 지나간다.
-    // 목 기본값(null)을 그대로 두면 상담 호출이 매달린 체인 자체가 시작되지 않는다.
     @BeforeEach
-    void chipMatchDone() {
-        lenient().when(chipMatcher.matchAsync(anyLong(), anyLong()))
-                .thenReturn(CompletableFuture.completedFuture(null));
+    void defaultGoals() {
+        // 목표 판정은 기본으로 꺼진 상태(목표 없음)로 둔다 — 대부분의 테스트는 목표와 무관하다.
+        lenient().when(goalJudge.judge(anyLong(), anyList(), anyLong()))
+                .thenReturn(CompletableFuture.completedFuture(GoalJudge.GoalState.DISABLED));
+        lenient().when(goalJudge.current(anyLong(), anyLong())).thenReturn(GoalJudge.GoalState.DISABLED);
+        lenient().when(messageTxService.transcript(anyLong())).thenReturn(List.of());
+        lenient().when(messageTxService.promptFor(anyLong(), any())).thenReturn(List.of());
     }
 
     @Test
@@ -158,12 +153,16 @@ class StoryServiceTest {
     }
 
     @Test
-    @DisplayName("메시지 전송 - 유저 메시지를 즉시 반환하고, 어시스턴트 답은 백그라운드로 저장한다")
+    @DisplayName("메시지 전송 - 유저 메시지를 즉시 반환하고, 목표 판정 뒤 어시스턴트 답을 백그라운드로 저장한다")
     void sendMessage_success() {
         MessageResponse userMessage = MessageResponse.from(message(1L, MessageRole.USER, "오늘 너무 힘들어"));
-        given(messageTxService.appendUserMessageAndBuildPrompt(1L, 10L, "오늘 너무 힘들어", null))
+        given(messageTxService.appendUserMessage(1L, 10L, "오늘 너무 힘들어"))
                 .willReturn(new MessageTxService.PreparedSend(userMessage, 1L));
-        given(llmClient.generate(anyList()))
+        List<Message> transcript = List.of(message(1L, MessageRole.USER, "오늘 너무 힘들어"));
+        given(messageTxService.transcript(10L)).willReturn(transcript);
+        GoalJudge.GoalState judged = new GoalJudge.GoalState(List.of(), List.of(goal("contact")), false);
+        given(goalJudge.judge(10L, transcript, 1L)).willReturn(CompletableFuture.completedFuture(judged));
+        given(chatLlm.reply(anyList()))
                 .willReturn(CompletableFuture.completedFuture("괜찮아요, 여기 있어요."));
         given(messageTxService.appendAssistantReply(10L, "괜찮아요, 여기 있어요."))
                 .willReturn(MessageResponse.from(message(2L, MessageRole.ASSISTANT, "괜찮아요, 여기 있어요.")));
@@ -173,48 +172,31 @@ class StoryServiceTest {
         // 즉시 반환값은 '내 메시지'
         assertThat(response.getRole()).isEqualTo(MessageRole.USER);
         assertThat(response.getContent()).isEqualTo("오늘 너무 힘들어");
-        verify(llmClient).generate(anyList());
-        // completedFuture라 thenAccept가 동기 실행 → 어시스턴트 저장까지 이뤄진다
+        // 판정 결과가 프롬프트 조립으로 들어간다 — 방금 들어온 말이 무엇을 채웠는지 알아야 같은 것을 다시 안 묻는다
+        verify(messageTxService).promptFor(10L, judged);
+        verify(chatLlm).reply(anyList());
+        // completedFuture라 콜백이 동기 실행 → 어시스턴트 저장까지 이뤄진다
         verify(messageTxService).appendAssistantReply(10L, "괜찮아요, 여기 있어요.");
-        // 후차감: 답 저장이 성공했으니 이 시점에 1회 기록된다
-        verify(usageLimiter).record(UsageKind.CHAT, 1L, 1);
-        // 답이 저장된 턴만 사실 추출이 돈다(별도 호출, 쿼터 미차감)
+        // 대화 회수는 세지 않는다 — 탐색 채팅은 리포트의 입력이라 턴마다 팔 물건이 아니다
+        verify(usageLimiter, never()).check(any(), any(), org.mockito.ArgumentMatchers.anyInt());
+        verify(usageLimiter, never()).record(any(), any(), org.mockito.ArgumentMatchers.anyInt());
+        // 답이 저장된 턴만 사실 추출이 돈다(별도 호출)
         verify(factExtractor).extractAsync(10L);
         // 답 저장까지 끝났으니 in-flight 잠금도 해제된다
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
     }
 
     @Test
-    @DisplayName("메시지 전송 - 길이와 무관하게 한 턴은 1회다(비용을 정하는 건 호출 수라서)")
-    void sendMessage_lengthDoesNotChangeUnits() {
-        String longContent = "가".repeat(2800);
-        MessageResponse userMessage = MessageResponse.from(message(1L, MessageRole.USER, longContent));
-        given(messageTxService.appendUserMessageAndBuildPrompt(1L, 10L, longContent, null))
-                .willReturn(new MessageTxService.PreparedSend(userMessage, 1L));
-        given(llmClient.generate(anyList()))
-                .willReturn(CompletableFuture.completedFuture("들었어."));
-        given(messageTxService.appendAssistantReply(10L, "들었어."))
-                .willReturn(MessageResponse.from(message(2L, MessageRole.ASSISTANT, "들었어.")));
-
-        storyService.sendMessage(1L, 10L, sendRequest(longContent));
-
-        verify(usageLimiter).check(UsageKind.CHAT, 1L, 1);
-        verify(usageLimiter).record(UsageKind.CHAT, 1L, 1);
-    }
-
-    @Test
-    @DisplayName("메시지 전송 - 없거나 남의 사연이면 STORY_NOT_FOUND, LLM 호출도 쿼터 기록도 없다")
+    @DisplayName("메시지 전송 - 없거나 남의 사연이면 STORY_NOT_FOUND, LLM 호출이 없다")
     void sendMessage_notFound() {
-        given(messageTxService.appendUserMessageAndBuildPrompt(1L, 10L, "hi", null))
+        given(messageTxService.appendUserMessage(1L, 10L, "hi"))
                 .willThrow(new BusinessException(ErrorCode.STORY_NOT_FOUND));
 
         assertThatThrownBy(() -> storyService.sendMessage(1L, 10L, sendRequest("hi")))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.STORY_NOT_FOUND);
 
-        verify(llmClient, never()).generate(anyList());
-        // 후차감이라 성공 전에 실패하면 기록할 것이 없다. 잠금만 해제.
-        verify(usageLimiter, never()).record(any(), any(), org.mockito.ArgumentMatchers.anyInt());
+        verify(chatLlm, never()).reply(anyList());
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
     }
 
@@ -228,34 +210,18 @@ class StoryServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.GENERATION_IN_PROGRESS);
 
-        // 접수 자체가 거부됐으니 한도 검사도, 메시지 저장도, LLM 호출도 없다
-        verify(usageLimiter, never()).check(any(), any(), org.mockito.ArgumentMatchers.anyInt());
-        verify(messageTxService, never()).appendUserMessageAndBuildPrompt(any(), any(), any(), any());
-        verify(llmClient, never()).generate(anyList());
-    }
-
-    @Test
-    @DisplayName("메시지 전송 - 일일 한도를 넘으면 QUOTA_EXCEEDED, 잠금을 해제하고 LLM을 호출하지 않는다")
-    void sendMessage_quotaExceeded() {
-        org.mockito.BDDMockito.willThrow(new BusinessException(ErrorCode.QUOTA_EXCEEDED))
-                .given(usageLimiter).check(UsageKind.CHAT, 1L, 1);
-
-        assertThatThrownBy(() -> storyService.sendMessage(1L, 10L, sendRequest("hi")))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.QUOTA_EXCEEDED);
-
-        verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
-        verify(messageTxService, never()).appendUserMessageAndBuildPrompt(any(), any(), any(), any());
-        verify(llmClient, never()).generate(anyList());
+        // 접수 자체가 거부됐으니 메시지 저장도, LLM 호출도 없다
+        verify(messageTxService, never()).appendUserMessage(any(), any(), any());
+        verify(chatLlm, never()).reply(anyList());
     }
 
     @Test
     @DisplayName("메시지 전송 - LLM 실패로 폴백을 저장한 경우에도 잠금은 해제된다")
     void sendMessage_llmFailureReleasesLock() {
         MessageResponse userMessage = MessageResponse.from(message(1L, MessageRole.USER, "hi"));
-        given(messageTxService.appendUserMessageAndBuildPrompt(1L, 10L, "hi", null))
+        given(messageTxService.appendUserMessage(1L, 10L, "hi"))
                 .willReturn(new MessageTxService.PreparedSend(userMessage, 1L));
-        given(llmClient.generate(anyList()))
+        given(chatLlm.reply(anyList()))
                 .willReturn(CompletableFuture.failedFuture(new RuntimeException("LLM down")));
 
         storyService.sendMessage(1L, 10L, sendRequest("hi"));
@@ -263,11 +229,9 @@ class StoryServiceTest {
         // 실패 시 폴백 메시지가 저장되고(폴링 정상 종료), 잠금도 풀린다
         verify(messageTxService).appendAssistantReply(eq(10L), any(String.class));
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
-        // 성공 시만 차감: LLM 장애로 폴백이 나간 턴은 유저 쿼터를 쓰지 않는다
-        verify(usageLimiter, never()).record(any(), any(), org.mockito.ArgumentMatchers.anyInt());
         // 답이 없는 턴은 추출할 것도 없다
         verify(factExtractor, never()).extractAsync(any());
-        // 미차감이라 무한 무료 호출이 가능한 자리 — 연속 실패로 세어 둔다
+        // 회수를 안 세는 이상 무한 무료 호출이 가능한 자리 — 연속 실패로 세어 둔다
         verify(chatRetryGuard).markFailed(1L);
     }
 
@@ -275,9 +239,9 @@ class StoryServiceTest {
     @DisplayName("메시지 전송 - 답이 저장되면 연속 실패 카운트를 지운다")
     void sendMessage_successClearsFailStreak() {
         MessageResponse userMessage = MessageResponse.from(message(1L, MessageRole.USER, "hi"));
-        given(messageTxService.appendUserMessageAndBuildPrompt(1L, 10L, "hi", null))
+        given(messageTxService.appendUserMessage(1L, 10L, "hi"))
                 .willReturn(new MessageTxService.PreparedSend(userMessage, 1L));
-        given(llmClient.generate(anyList())).willReturn(CompletableFuture.completedFuture("들었어"));
+        given(chatLlm.reply(anyList())).willReturn(CompletableFuture.completedFuture("들었어"));
         given(messageTxService.appendAssistantReply(10L, "들었어"))
                 .willReturn(MessageResponse.from(message(2L, MessageRole.ASSISTANT, "들었어")));
 
@@ -298,30 +262,17 @@ class StoryServiceTest {
                 .hasFieldOrPropertyWithValue("retryAfterSeconds", 42);
 
         // 유저 메시지도 저장하지 않는다 — 답이 붙지 않을 말풍선만 남으면 폴링이 헛돈다
-        verify(messageTxService, never()).appendUserMessageAndBuildPrompt(any(), any(), any(), any());
-        verify(llmClient, never()).generate(anyList());
+        verify(messageTxService, never()).appendUserMessage(any(), any(), any());
+        verify(chatLlm, never()).reply(anyList());
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
-    }
-
-    @Test
-    @DisplayName("메시지 전송 - 잔여가 없으면 쿨다운 검사까지 가지 않는다(할 일이 있는 안내가 우선)")
-    void sendMessage_quotaBeforeCooldown() {
-        org.mockito.BDDMockito.willThrow(new BusinessException(ErrorCode.QUOTA_EXCEEDED))
-                .given(usageLimiter).check(UsageKind.CHAT, 1L, 1);
-
-        assertThatThrownBy(() -> storyService.sendMessage(1L, 10L, sendRequest("hi")))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.QUOTA_EXCEEDED);
-
-        verify(chatRetryGuard, never()).blockedSeconds(any());
     }
 
     @Test
     @DisplayName("답변 재시도 - 유저 메시지를 새로 저장하지 않고 답만 다시 만든다")
     void retryLastReply_success() {
         given(messageTxService.prepareRetry(1L, 10L))
-                .willReturn(new MessageTxService.PreparedRetry(7L, "오늘 너무 힘들어", List.of()));
-        given(llmClient.generate(anyList())).willReturn(CompletableFuture.completedFuture("들었어"));
+                .willReturn(new MessageTxService.PreparedRetry(7L, "오늘 너무 힘들어"));
+        given(chatLlm.reply(anyList())).willReturn(CompletableFuture.completedFuture("들었어"));
         given(messageTxService.appendAssistantReply(10L, "들었어"))
                 .willReturn(MessageResponse.from(message(9L, MessageRole.ASSISTANT, "들었어")));
 
@@ -330,26 +281,9 @@ class StoryServiceTest {
         // 폴백을 지웠으니 클라가 들고 있던 id는 없는 행이다 — 폴링 기준을 새로 준다
         assertThat(response.getPollAfterId()).isEqualTo(7L);
         // 같은 말을 다시 저장하지 않는다(중복 말풍선, 중복 사실 추출 방지)
-        verify(messageTxService, never()).appendUserMessageAndBuildPrompt(any(), any(), any(), any());
+        verify(messageTxService, never()).appendUserMessage(any(), any(), any());
         verify(messageTxService).appendAssistantReply(10L, "들었어");
-        // 재시도라고 회수를 더 받지도, 깎아주지도 않는다
-        verify(usageLimiter).record(UsageKind.CHAT, 1L, 1);
         verify(chatRetryGuard).clear(1L);
-        verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
-    }
-
-    @Test
-    @DisplayName("답변 재시도 - 잔여가 없으면 폴백을 지우지 않는다(재시도 버튼이 사라지면 안 된다)")
-    void retryLastReply_quotaExceededKeepsFallback() {
-        org.mockito.BDDMockito.willThrow(new BusinessException(ErrorCode.QUOTA_EXCEEDED))
-                .given(usageLimiter).check(UsageKind.CHAT, 1L, 1);
-
-        assertThatThrownBy(() -> storyService.retryLastReply(1L, 10L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.QUOTA_EXCEEDED);
-
-        verify(messageTxService, never()).prepareRetry(any(), any());
-        verify(llmClient, never()).generate(anyList());
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
     }
 
@@ -363,7 +297,7 @@ class StoryServiceTest {
                 .hasFieldOrPropertyWithValue("retryAfterSeconds", 30);
 
         verify(messageTxService, never()).prepareRetry(any(), any());
-        verify(llmClient, never()).generate(anyList());
+        verify(chatLlm, never()).reply(anyList());
     }
 
     @Test
@@ -402,6 +336,24 @@ class StoryServiceTest {
         assertThat(storyService.getMessagesSince(1L, 10L, 5L)).isEmpty();
 
         verify(messageTxService, never()).appendAssistantReply(any(), any());
+    }
+
+    @Test
+    @DisplayName("폴링 - 상담자 답에 목표 진행(채워진 수 / 전체)을 붙인다. 유저 메시지에는 안 붙는다")
+    void getMessagesSince_attachesGoalProgress() {
+        given(storyRepository.findByIdAndUserIdAndDeletedAtIsNull(10L, 1L))
+                .willReturn(Optional.of(story(1L, "사연")));
+        given(messageRepository.existsByStoryIdAndIdGreaterThan(10L, 5L)).willReturn(true);
+        given(messageRepository.findByStoryIdAndIdGreaterThanOrderByIdAsc(10L, 5L))
+                .willReturn(List.of(message(6L, MessageRole.ASSISTANT, "먼저 연락한 쪽이 있었나요")));
+        given(goalJudge.current(10L, 0)).willReturn(new GoalJudge.GoalState(
+                List.of(new GoalJudge.FilledGoal("role", "상대에게 어떤 존재였나", "근거")),
+                List.of(goal("contact"), goal("refusal")), false));
+
+        List<MessageResponse> fresh = storyService.getMessagesSince(1L, 10L, 5L);
+
+        assertThat(fresh.get(0).getGoalsDone()).isEqualTo(1);
+        assertThat(fresh.get(0).getGoalsTotal()).isEqualTo(3);
     }
 
     @Test
@@ -466,6 +418,13 @@ class StoryServiceTest {
         Message message = Message.builder().role(role).content(content).build();
         ReflectionTestUtils.setField(message, "id", id);
         return message;
+    }
+
+    private ChatGoalProperties.Goal goal(String key) {
+        ChatGoalProperties.Goal goal = new ChatGoalProperties.Goal();
+        goal.setKey(key);
+        goal.setName(key);
+        return goal;
     }
 
     private StoryCreateRequest createRequest(String title) {

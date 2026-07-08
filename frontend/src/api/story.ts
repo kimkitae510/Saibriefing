@@ -1,5 +1,4 @@
 import { api } from './client';
-import type { ChipView } from './chip';
 
 export interface StoryResponse {
   id: number;
@@ -34,11 +33,10 @@ export interface MessageResponse {
   // 답을 못 받아 폴백이 저장된 턴. 화면은 이 값으로 재시도 버튼을 띄운다
   // (폴백 문구를 프론트가 복사해 비교하면 문구를 고칠 때마다 두 곳이 어긋난다)
   failed: boolean;
-  // 말풍선 대신 입력 카드로 그릴 질문들. 서버가 본문에서 떼어 보낸다.
-  questions: string[];
-  // 이 답변 밑에 그릴 추천 질문. 상담 답변과 같은 호출에서 함께 나온다.
-  // 마지막 답변에만 채워져 온다 — 지난 답변에도 그리면 어느 시점의 추천인지 알 수 없다.
-  chips: ChipView[];
+  // 탐색 목표의 진행(채워진 수 / 전체). 상담자 답에만 붙고, 목표가 꺼져 있으면 없다.
+  // 둘이 같아지는 순간이 리포트 입구를 세우는 자리다.
+  goalsDone?: number | null;
+  goalsTotal?: number | null;
 }
 
 export interface MessagePageResponse {
@@ -60,17 +58,8 @@ export async function getMessages(
 }
 
 // 폴링 방식: 유저 메시지만 저장하고 즉시 반환(202). 어시스턴트 답은 이후 since로 받아온다.
-// chipId는 추천 질문에서 온 말일 때만. 서버가 그 칩의 전문 프롬프트로 답을 만든다 —
-// 없으면 평소 자유 상담이라, 칩은 질문 범위를 제한하는 장치가 아니라 지름길이다.
-export async function sendMessage(
-  storyId: number,
-  content: string,
-  chipId?: string,
-): Promise<MessageResponse> {
-  const { data } = await api.post<MessageResponse>(`/api/stories/${storyId}/messages`, {
-    content,
-    chipId,
-  });
+export async function sendMessage(storyId: number, content: string): Promise<MessageResponse> {
+  const { data } = await api.post<MessageResponse>(`/api/stories/${storyId}/messages`, { content });
   return data;
 }
 

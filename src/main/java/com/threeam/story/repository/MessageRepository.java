@@ -20,6 +20,10 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     // 위로 스크롤: 커서(마지막으로 로드한 가장 오래된 id)보다 과거만 가져온다.
     Slice<Message> findByStoryIdAndIdLessThanOrderByIdDesc(Long storyId, Long cursor, Pageable pageable);
 
+    // 탐색 채팅 프롬프트와 판독 입력용: 이 사연의 대화 전체를 시간순으로. 창(window)을 두지 않는다 —
+    // 대화는 시간 상한으로 짧게 유지되고, 잘라 보내면 상담자가 앞에서 들은 것을 다시 묻는다.
+    List<Message> findByStoryIdOrderByIdAsc(Long storyId);
+
     // 폴링: 방금 보낸 메시지(after) 이후에 새로 생긴 메시지(주로 어시스턴트 답)를 시간순으로 가져온다.
     List<Message> findByStoryIdAndIdGreaterThanOrderByIdAsc(Long storyId, Long after);
 

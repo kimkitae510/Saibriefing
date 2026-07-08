@@ -3,12 +3,6 @@ package com.threeam.story.service;
 import com.threeam.global.exception.ErrorCode;
 import com.threeam.global.exception.custom.BusinessException;
 import com.threeam.global.exception.custom.RetryAfterException;
-import com.threeam.assessment.repository.AssessmentRepository;
-import com.threeam.chip.ChipMatcher;
-import com.threeam.chip.ChipStore;
-import com.threeam.chip.dto.ChipView;
-import com.threeam.llm.ChatMessage;
-import com.threeam.llm.LlmClient;
 import com.threeam.story.dto.MessagePageResponse;
 import com.threeam.story.dto.MessageResponse;
 import com.threeam.story.dto.MessageRetryResponse;
@@ -50,12 +44,10 @@ public class StoryService {
     private final MessageRepository messageRepository;
     private final MessageTxService messageTxService;
     private final StoryFactExtractor factExtractor;
-    private final ChipStore chipStore;
-    private final ChipMatcher chipMatcher;
-    private final AssessmentRepository assessmentRepository;
     // 답변을 고치지는 않고, 글자로 판정되는 규칙 위반만 세어 남긴다(ReplyLinter 주석 참고).
     private final ReplyLinter replyLinter;
-    private final LlmClient llmClient;
+    private final ChatLlm chatLlm;
+    private final GoalJudge goalJudge;
     private final UsageLimiter usageLimiter;
     private final ChatRetryGuard chatRetryGuard;
     // 답변 저장, 원장 적재를 HttpClient 스레드가 아니라 우리 풀에서 돌린다(LlmCallbackConfig 참고).
@@ -97,60 +89,47 @@ public class StoryService {
     // 폴링 방식: 유저 메시지를 저장하고 즉시 반환한다. 어시스턴트 답은 백그라운드에서 생성, 저장되고,
     // 클라이언트는 GET .../messages/since?after=<유저메시지id>로 폴링해 답이 붙는지 확인한다.
     // 트랜잭션 밖(NOT_SUPPORTED)에서 오케스트레이션 — 느린 LLM 호출이 DB 커넥션을 잡지 않게.
+    // 대화 회수는 세지 않는다 — 탐색 채팅은 리포트의 입력이라 턴마다 팔 물건이 아니고, 회수로 막으면
+    // 목표가 차기 전에 대화가 끊긴다. 남는 방어는 생성 락(연타)과 연속 실패 쿨다운(무한 무료 호출)뿐이다.
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public MessageResponse sendMessage(Long userId, Long storyId, MessageSendRequest request) {
-        // 이 유저가 이미 대화 답변을 생성 중이면 접수를 거부한다(연타, 중복요청, 동시 발사로 한도 우회 차단).
+        // 이 유저가 이미 대화 답변을 생성 중이면 접수를 거부한다(연타, 중복요청, 동시 발사 차단).
         usageLimiter.acquireInFlight(UsageKind.CHAT, userId);
         try {
-            // 후차감: 여기서는 한도 검사만 하고, 기록은 답변 저장이 성공한 뒤에 한다.
-            // 유저가 폴링을 끊어도(중지) 서버는 끝까지 저장하므로 "기록 시점"은 반드시 도달한다.
-            usageLimiter.check(UsageKind.CHAT, userId, CHAT_UNITS);
-
-            // 연속 실패 가드. 실패는 후차감(미차감)이라 막지 않으면 무한 무료 LLM 호출이 된다.
-            // 잔여 검사 뒤에 둔다 — 둘 다 걸리면 "이용권을 다 썼다"가 유저가 할 일이 있는 안내다.
             int retryAfterSeconds = chatRetryGuard.blockedSeconds(userId);
             if (retryAfterSeconds > 0) {
                 // 유저 메시지도 저장하지 않는다 — 답이 붙지 않을 말풍선만 남기고 폴링이 헛돈다.
                 throw new RetryAfterException(ErrorCode.CHAT_RETRY_COOLDOWN, retryAfterSeconds);
             }
 
-            MessageTxService.PreparedSend prepared = messageTxService.appendUserMessageAndBuildPrompt(
-                    userId, storyId, request.getContent(), request.getChipId());
+            MessageTxService.PreparedSend prepared = messageTxService.appendUserMessage(
+                    userId, storyId, request.getContent());
 
-            // 칩을 눌렀으면 모듈이 이미 정해져 있어 판별을 건너뛴다. 자유입력이면 저가 호출로
-            // 어느 갈래인지 먼저 가린 뒤 프롬프트를 만든다 — 같은 질문에 답의 깊이가 갈리지 않게.
-            matchThenGenerate(userId, storyId, prepared.userMessageId(),
-                    request.getChipId() == null || request.getChipId().isBlank());
+            generateInBackground(userId, storyId);
 
             return prepared.userMessage();
         } catch (RuntimeException e) {
-            // 후차감이라 되돌릴 차감이 없다. 잠금만 풀고 그대로 던진다.
             usageLimiter.releaseInFlight(UsageKind.CHAT, userId);
             throw e;
         }
     }
 
     // 답을 못 받은 턴(폴백 말풍선)을 유저가 다시 시도한다. 같은 말을 다시 타이핑시키지 않으려는 것이라
-    // 유저 메시지는 그대로 두고 답만 새로 만든다. 잔여 검사, 생성 락, 연속 실패 가드는 전송과 똑같이 태운다 —
+    // 유저 메시지는 그대로 두고 답만 새로 만든다. 생성 락, 연속 실패 가드는 전송과 똑같이 태운다 —
     // 재시도도 실제 호출 비용이라 여기가 빠지면 가드를 우회하는 문이 된다.
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public MessageRetryResponse retryLastReply(Long userId, Long storyId) {
         usageLimiter.acquireInFlight(UsageKind.CHAT, userId);
         try {
-            // 재시도도 한 턴이라 전송과 같은 1회를 본다 — 깎아주지도, 더 받지도 않는다.
-            usageLimiter.check(UsageKind.CHAT, userId, CHAT_UNITS);
-
             int retryAfterSeconds = chatRetryGuard.blockedSeconds(userId);
             if (retryAfterSeconds > 0) {
                 throw new RetryAfterException(ErrorCode.CHAT_RETRY_COOLDOWN, retryAfterSeconds);
             }
 
             // 폴백 삭제는 검사를 다 통과한 뒤다 — 거절당한 유저에게서 재시도 버튼을 뺏지 않는다.
-            // 재시도는 판별을 다시 하지 않는다 — 유저 메시지가 그대로라 결과도 같고,
-            // 이미 행에 찍혀 있어 프롬프트 재조립이 그 값을 그대로 집는다.
             MessageTxService.PreparedRetry prepared = messageTxService.prepareRetry(userId, storyId);
 
-            generateInBackground(userId, storyId, CompletableFuture.completedFuture(null));
+            generateInBackground(userId, storyId);
 
             return new MessageRetryResponse(prepared.pollAfterId());
         } catch (RuntimeException e) {
@@ -159,20 +138,19 @@ public class StoryService {
         }
     }
 
-    // 자유입력이면 판별 → 프롬프트 조립 → 생성. 칩 클릭이면 판별을 건너뛴다.
-    // 유저는 이미 202를 받고 "..."을 보고 있으므로, 판별에 드는 1~2초는 답변 도착만 늦춘다.
-    private void matchThenGenerate(Long userId, Long storyId, Long userMessageId, boolean needsMatch) {
-        CompletableFuture<Void> matched = needsMatch
-                ? chipMatcher.matchAsync(storyId, userMessageId)   // 안에서 삼킨다. 항상 완료된다
-                : CompletableFuture.completedFuture(null);
-        generateInBackground(userId, storyId, matched);
-    }
-
-    // fire-and-forget: 응답을 기다리지 않는다. 완료되면 어시스턴트 메시지로 저장, 실패하면 폴백 저장.
+    // fire-and-forget: 응답을 기다리지 않는다. 목표 판정 → 프롬프트 조립 → 답변 순으로 돌고,
+    // 완료되면 어시스턴트 메시지로 저장, 실패하면 폴백 저장.
+    // 판정이 답변보다 먼저인 이유: 방금 들어온 말이 무엇을 채웠는지 알아야 같은 것을 다시 안 묻는다.
     // handle로 LLM 단계 예외와 저장 단계 예외를 분리한다(저장 실패를 'LLM 실패'로 오인 기록하지 않게).
-    private void generateInBackground(Long userId, Long storyId, CompletableFuture<Void> ready) {
-        ready.thenComposeAsync(ignored ->
-                        llmClient.generate(messageTxService.promptFor(storyId)), llmCallbackExecutor)
+    private void generateInBackground(Long userId, Long storyId) {
+        CompletableFuture.completedFuture(null)
+                .thenComposeAsync(ignored -> {
+                    List<Message> transcript = messageTxService.transcript(storyId);
+                    long userTurns = transcript.stream()
+                            .filter(m -> m.getRole() == MessageRole.USER).count();
+                    return goalJudge.judge(storyId, transcript, userTurns)
+                            .thenCompose(goals -> chatLlm.reply(messageTxService.promptFor(storyId, goals)));
+                }, llmCallbackExecutor)
                 .handleAsync((reply, ex) -> {
                     if (ex != null) {
                         log.error("LLM 응답 생성 실패 storyId={} userId={}", storyId, userId, ex);
@@ -192,12 +170,7 @@ public class StoryService {
                 });
     }
 
-    // 길이와 무관하게 한 턴은 1회다. 길이로 환산하던 때가 있었지만 원가와 맞지 않았다 —
-    // 한 턴 48.7원 중 유저 메시지 몫은 3~10%고(고정 프롬프트 1.1만 토큰 + 추론 + 출력이 나머지),
-    // 2,000자를 더 붙여도 5원이 안 된다. 비용을 정하는 건 호출 수다.
-    private static final int CHAT_UNITS = 1;
-
-    // LLM 성공 후: 답변 저장 → 차감 → 사실 추출. 저장 단계 실패는 'LLM 실패'와 구분해 명확히 남긴다.
+    // LLM 성공 후: 답변 저장 → 사실 추출. 저장 단계 실패는 'LLM 실패'와 구분해 명확히 남긴다.
     private void persistReplyQuietly(Long userId, Long storyId, String reply) {
         try {
             messageTxService.appendAssistantReply(storyId, reply);
@@ -209,7 +182,6 @@ public class StoryService {
             return;
         }
         clearChatFailedQuietly(userId);      // 답이 붙었으니 연속이 끊겼다.
-        recordUsageQuietly(userId);          // 성공 시만 차감. 폴백(LLM 장애)은 유저 잘못이 아니라 미차감.
         replyLinter.inspect(storyId, reply); // 규칙 위반 계측. 답변은 그대로 나간다.
         factExtractor.extractAsync(storyId); // 원장 갱신. 실패해도 채팅에 영향 없음(내부에서 삼킴).
     }
@@ -242,15 +214,6 @@ public class StoryService {
         }
     }
 
-    // 쿼터 기록 실패가 이미 저장된 답변을 실패 처리(폴백 중복 저장)로 오염시키지 않게 격리한다.
-    private void recordUsageQuietly(Long userId) {
-        try {
-            usageLimiter.record(UsageKind.CHAT, userId, CHAT_UNITS);
-        } catch (RuntimeException e) {
-            log.error("대화 쿼터 기록 실패 userId={}", userId, e);
-        }
-    }
-
     // 답도 폴백도 없이 유저 메시지만 남은 턴을 폴백으로 닫는다.
     // 서버가 재시작되면 진행 중이던 LLM 호출은 흔적 없이 사라지는데(fire-and-forget이라 되살릴
     // 것도 없다), 그 자리는 화면에서 영영 끝나지 않는 "..."로 남는다. 여기서 닫아야 폴링이 끝나고
@@ -279,8 +242,9 @@ public class StoryService {
         if (!messageRepository.existsByStoryIdAndIdGreaterThan(storyId, afterId)) {
             healDanglingTurn(userId, storyId);
         }
-        List<MessageResponse> fresh = withChipsOnLast(
-                messageRepository.findByStoryIdAndIdGreaterThanOrderByIdAsc(storyId, afterId));
+        List<MessageResponse> fresh = withGoals(storyId, messageRepository
+                .findByStoryIdAndIdGreaterThanOrderByIdAsc(storyId, afterId)
+                .stream().map(MessageResponse::from).toList());
         // 답을 화면에서 받아봤으니 읽음 처리 — 목록 안읽음 배지의 기준 시각.
         if (!fresh.isEmpty()) {
             story.markRead();
@@ -310,43 +274,30 @@ public class StoryService {
         for (int i = content.size() - 1; i >= 0; i--) {
             ordered.add(content.get(i));
         }
-        // 칩은 최신 페이지의 마지막 답변에만 붙는다. 과거 페이지(cursor 있음)의 끝은 화면
-        // 중간이라, 거기 칩을 그리면 스크롤 도중에 지난 추천이 되살아난다.
-        List<MessageResponse> messages = cursor == null
-                ? withChipsOnLast(ordered)
-                : ordered.stream().map(MessageResponse::from).toList();
+        List<MessageResponse> messages = withGoals(storyId,
+                ordered.stream().map(MessageResponse::from).toList());
         // 다음 커서 = 이번 배치에서 가장 오래된(가장 작은) id. 클라는 이보다 과거를 이어서 요청한다.
         Long nextCursor = content.isEmpty() ? null : content.get(content.size() - 1).getId();
 
         return new MessagePageResponse(messages, nextCursor, slice.hasNext());
     }
 
-    // 추천 질문은 목록의 마지막 답변에만 실어 내린다. 지난 답변까지 칩을 그리면 대화 곳곳에
-    // 눌리는 버튼이 남아, 유저가 어느 시점의 추천을 누르는지도 모르는 채 그때 맥락으로 상담이 열린다.
-    private List<MessageResponse> withChipsOnLast(List<Message> ordered) {
-        if (ordered.isEmpty()) {
-            return List.of();
+    // 상담자 답에 목표 진행(채워진 수 / 전체)을 붙인다. 지금 상태 하나를 모든 답에 같은 값으로 —
+    // 화면이 보는 건 마지막 답뿐이고, 답마다 그때의 값을 남기려면 컬럼이 하나 더 필요한데 그럴 값이 없다.
+    private List<MessageResponse> withGoals(Long storyId, List<MessageResponse> messages) {
+        if (messages.stream().noneMatch(m -> m.getRole() != MessageRole.USER)) {
+            return messages;
         }
-        int last = ordered.size() - 1;
-        List<MessageResponse> responses = new ArrayList<>();
-        for (int i = 0; i < ordered.size(); i++) {
-            Message message = ordered.get(i);
-            responses.add(i == last
-                    ? MessageResponse.from(message, chipStore.views(message.getSuggestedChips()))
-                    : MessageResponse.from(message));
+        GoalJudge.GoalState goals = goalJudge.current(storyId, 0);
+        if (goals.total() == 0) {
+            return messages;
         }
-        return responses;
-    }
-
-
-    // "다른 질문 보기"의 전체 목록. 사연 기준으로 거른다 — 추천 3개만 막고 여기를 열어두면
-    // 진단을 안 받은 유저가 목록에서 진단 설명 칩을 골라 읽을 데이터 없이 결과를 설명하게 된다.
-    public List<ChipView> getChips(Long userId, Long storyId) {
-        findOwned(storyId, userId);
-        return chipStore.allViews(assessmentRepository
-                .findFirstByStoryIdOrderByCreatedAtDesc(storyId)
-                .map(a -> a.getProbability())
-                .orElse(null));
+        for (MessageResponse message : messages) {
+            if (message.getRole() != MessageRole.USER) {
+                message.withGoals(goals.filled().size(), goals.total());
+            }
+        }
+        return messages;
     }
 
     // 소프트 딜리트: 대화, 기억, 분석은 남길 기록이라 물리 삭제하지 않고 사연에 삭제 시각만 찍는다.
