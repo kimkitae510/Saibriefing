@@ -1,6 +1,7 @@
 package com.threeam.assessment.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.threeam.assessment.ReadingProperties;
 import com.threeam.assessment.dto.AssessmentContext;
 import com.threeam.assessment.dto.AssessmentResponse;
 import com.threeam.assessment.dto.ReadingDraft;
@@ -17,6 +18,7 @@ import com.threeam.global.exception.ErrorCode;
 import com.threeam.global.exception.custom.BusinessException;
 import com.threeam.llm.ChatMessage;
 import com.threeam.match.service.MatchProfileService;
+import com.threeam.story.entity.ChatMeta;
 import com.threeam.story.entity.FactSource;
 import com.threeam.story.entity.Message;
 import com.threeam.story.entity.MessageRole;
@@ -34,9 +36,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -47,8 +47,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class AssessmentTxService {
-
-    private static final int HISTORY_WINDOW = 20;
 
     // 분석 프롬프트에 싣는 사실 원장 상한(최근 N개). 분석은 사실이 확률의 근거라 채팅(30)보다 넉넉히.
     private static final int FACT_INJECT_LIMIT = 50;
@@ -65,6 +63,7 @@ public class AssessmentTxService {
     private final MatchProfileService matchProfileService;
     private final TypeBandScorer scorer;
     private final ObjectMapper objectMapper;
+    private final ReadingProperties readingProperties;
 
     // INSUFFICIENT 재시도 가드: 지난 근거부족 시점 이후 새 대화가 없으면 막는다(같은 재료 = 같은 답).
     // 표시는 stories.last_insufficient_at(DB)에 있어 재시작, 멀티인스턴스에서도 유지된다.
@@ -147,71 +146,70 @@ public class AssessmentTxService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
     }
 
-    // tx1: 소유권 확인 + 재분석 가드 + 최근 대화 + 기억 요약을 모아 온다. 짧게 끝난다.
+    // 재분석 가드 없이 최근 대화만 가져온다. 사례 매칭이 쓰는 경로다 —
+    // 가드는 "같은 재료로 분석을 또 돌리지 마라"는 뜻이라 다른 작업까지 막을 이유가 없다.
+    // 매칭은 이미 나온 진단에 붙는 일이라, 새 대화가 없어도 처음 한 번은 돌아야 한다.
     @Transactional(readOnly = true)
-    public AssessmentContext loadContext(Long userId, Long storyId) {
+    public List<ChatMessage> loadConversation(Long userId, Long storyId) {
         storyRepository.findByIdAndUserIdAndDeletedAtIsNull(storyId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
 
-        // 재분석 가드: 지난 분석 이후 새 대화가 없으면 같은 재료라 거부한다(AS002).
-        // "원장에 새 사실이 없어도 거부"(구 AS003)는 폐지 — temperature 0으로 같은 재료면 같은
-        // 점수가 나와 출렁임 문제가 사라졌고, 채팅 추출이 사실을 놓쳤을 때 분석이 대화에서
-        // 직접 사실을 뽑아 복구하는 길을 가드가 막는 부작용이 실측됐다(재회 성사 미기재 사건).
-        // 기준은 마지막 분석과 마지막 헤어짐 확인(번복) 중 늦은 쪽 — 번복이 잠금 분석을 지우면
-        // 그 분석을 소진시킨 메시지들이 미소진으로 되돌아가, 분석 시각만 보면 새 대화 없이
-        // 분석과 번복이 무한 반복된다(실측).
-        Optional<Assessment> lastAssessment = assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(storyId);
-        LocalDateTime lastAssessedAt = lastAssessment.map(Assessment::getCreatedAt).orElse(null);
-        LocalDateTime lastConfirmedAt = storyFactRepository
-                .findFirstByStoryIdAndFactOrderByIdDesc(storyId, BREAKUP_CONFIRMED_FACT)
-                .map(StoryFact::getCreatedAt)
-                .orElse(null);
-        Stream.of(lastAssessedAt, lastConfirmedAt)
-                .filter(Objects::nonNull)
-                .max(LocalDateTime::compareTo)
-                .ifPresent(since -> {
-                    // 유저가 화면에서 직접 적어준 사실도 새 대화와 동급의 새 재료다 —
-                    // 채팅 없이 사실만 보태고 재분석하는 동선(부족 정보 직접 입력)을 허용한다.
-                    if (!messageRepository.existsByStoryIdAndCreatedAtAfter(storyId, since)
-                            && !storyFactRepository.existsByStoryIdAndSourceAndCreatedAtAfter(
-                                    storyId, FactSource.USER, since)) {
-                        throw new BusinessException(ErrorCode.ASSESSMENT_NO_NEW_MESSAGES);
-                    }
-                });
-
-        List<Message> recent = messageRepository
-                .findByStoryIdOrderByIdDesc(storyId, PageRequest.of(0, HISTORY_WINDOW))
-                .getContent();
-        if (recent.isEmpty()) {
-            throw new BusinessException(ErrorCode.ASSESSMENT_NO_MESSAGES);
-        }
-
-        // 최신→과거로 왔으니 시간순으로 뒤집어 대화 순서를 복원한다.
-        // 상담자(시현)의 말은 싣지 않는다 — 그건 관측된 사실이 아니라 그때의 추측인데,
-        // 분석이 그 해석 문장을 요인 근거로 옮겨 적는 오염이 실측됐다(골든셋 12).
-        // 둘이 서로를 베끼면 판정이 늘 일치해 교차 검증도 무의미해진다. 분석의 재료는
-        // 유저가 말한 사실과 원장(StoryFact)이고, 원장은 아래에서 따로 실린다.
+        // 대화 전체를 시간순으로, 양쪽 역할 다. 창(window)을 두지 않는다 — 대화는 시간 상한으로 짧다.
+        // 상담자 발화도 싣는다: 탐색 채팅의 유저 답은 "응", "그때 한 번"처럼 짧아서 상담자의 질문이
+        // 없으면 무엇에 대한 답인지가 사라진다(실측 592). 상담자는 탐색 판에서 해석과 처방을 하지
+        // 않으므로 옛 판의 오염(해석 문장을 요인 근거로 옮겨 적음, 골든셋 12)은 프롬프트가 막는다 —
+        // 그래도 역할을 (상담자)/(사연자)로 표시해 판독이 누구 말인지 가려 읽게 한다.
+        // 각 발화 앞에 작성일을 박는다 — 사연 속 "일주일째 연락 없다" 같은 상대 시간 표현은
+        // 그 말을 한 날 기준이라, 날짜 없이 주입하면 판독이 몇 달 전 상태를 지금으로 읽는다(실측 619:
+        // 7개월 경과를 못 읽음). 오늘 날짜(todayLine)와 짝이 되어야 경과 계산이 성립한다.
         List<ChatMessage> conversation = new ArrayList<>();
-        for (int i = recent.size() - 1; i >= 0; i--) {
-            Message message = recent.get(i);
+        for (Message message : messageRepository.findByStoryIdOrderByIdAsc(storyId)) {
+            if (message.isFallback()) {
+                continue;
+            }
+            String day = message.getCreatedAt() == null ? ""
+                    : "(" + FACT_DATE.format(message.getCreatedAt()) + ") ";
+            String content = ChatMeta.strip(message.getContent());
             if (message.getRole() == MessageRole.USER) {
-                conversation.add(ChatMessage.user(message.getContent()));
+                conversation.add(ChatMessage.user(day + "(사연자) " + content));
+            } else {
+                conversation.add(ChatMessage.assistant(day + "(상담자) " + content));
             }
         }
-        if (conversation.isEmpty()) {
+        if (conversation.stream().noneMatch(m -> m.role() == com.threeam.llm.LlmRole.USER)) {
             throw new BusinessException(ErrorCode.ASSESSMENT_NO_MESSAGES);
         }
+        return conversation;
+    }
+
+    // tx1: 소유권 확인 + 최근 대화 + 기억 요약을 모아 온다. 짧게 끝난다.
+    // 재분석 가드(지난 분석 이후 새 대화 없으면 AS002 거부)는 폐지 — 같은 재료로 다시 돌리는 것도
+    // 유저의 선택이고 후차감이라 비용은 본인이 진다. 무한 무료 루프는 실패 가드(위)가 따로 막는다.
+    @Transactional(readOnly = true)
+    public AssessmentContext loadContext(Long userId, Long storyId) {
+        Story story = storyRepository.findByIdAndUserIdAndDeletedAtIsNull(storyId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
+
+        Optional<Assessment> lastAssessment = assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(storyId);
+
+        List<ChatMessage> conversation = loadConversation(userId, storyId);
 
         String intakeBlock = storyIntakeRepository.findByStoryId(storyId)
                 .map(StoryIntakeService::describe)
                 .orElse(null);
         return new AssessmentContext(factLines(storyId), conversation,
-                todayLine(), previousDigest(lastAssessment.orElse(null)), intakeBlock);
+                todayLine(story), previousDigest(lastAssessment.orElse(null)), intakeBlock);
     }
 
     // 루브릭 시간 규칙(5주/3개월, 소진형 1개월)의 기준점. 원장 기록일 추정에 맡기지 않고 명시한다.
-    private String todayLine() {
-        return "오늘 날짜: " + LocalDate.now() + ". 이별 경과 등 시간 계산은 이 날짜 기준이다.";
+    // 개발 플래그(today-from-story)면 사연 작성일 — 옛 사연 재실행에서 날짜 차이가 글에 새는 것을 막는다.
+    private String todayLine(Story story) {
+        LocalDate today = LocalDate.now();
+        if (readingProperties != null && readingProperties.isTodayFromStory()
+                && story.getCreatedAt() != null) {
+            today = story.getCreatedAt().toLocalDate();
+        }
+        return "오늘 날짜: " + today + ". 이별 경과 등 시간 계산은 이 날짜 기준이다.";
     }
 
     // 직전 분석 요지 — 새 사실 없이 유형이 분석마다 흔들리는 것을 막는 앵커.
@@ -324,20 +322,16 @@ public class AssessmentTxService {
                 .assessmentId(assessmentId)
                 .baseAssessmentId(base != null ? base.getId() : null)
                 .body(body)
-                .nowState(draft.internal().nowState())
-                .resolveState(draft.internal().resolveState())
-                .remainState(draft.internal().remainState())
-                .reselectState(draft.internal().reselectState())
                 .build());
         return AssessmentResponse.Reading.of(draft, current, base, reading.getCreatedAt());
     }
 
-    // 유저가 "사귀는 중" 판정을 번복할 때 원장에 남기는 문장.
-    // 분석 프롬프트(ReunionLlm)가 이 문장을 근거로 DATING 재판정을 멈춘다 — 문구를 바꾸면 프롬프트 규칙도 함께 바꿔야 한다.
-    public static final String BREAKUP_CONFIRMED_FACT = "유저가 직접 확인함: 사귀는 중이 아니라 헤어진 상태다";
+    // 유저가 재회 성공 잠금을 번복(재이별 신고)할 때 원장에 남기는 문장.
+    public static final String BREAKUP_CONFIRMED_FACT = "유저가 직접 확인함: 다시 헤어진 상태다";
 
-    // 마지막 판정이 "만나는 중"(DATING 또는 재회 성공 REUNITED)일 때만 받는다 —
-    // 아무 때나 열어두면 원장에 무의미한 확인 기록이 쌓인다. 재회했다가 다시 헤어지는 경우도 이 창구다.
+    // 마지막 판정이 재회 성공(REUNITED) 잠금일 때만 받는다 —
+    // 아무 때나 열어두면 원장에 무의미한 확인 기록이 쌓인다.
+    // (DATING 상태는 폐지 — 만나는 중 사연은 게이트가 INSUFFICIENT 안내로 처리하고 저장하지 않는다.)
     // 유저가 "헤어진 게 맞다"고 정정하면 그 잠금 판정은 오판이므로 기록에서 지우고,
     // 직전 확률 분석이 다시 최신이 되게 한다(100% 번복과 같은 즉시 복귀 — 재분석 불필요).
     // 직전 확률 분석이 없으면(첫 분석부터 잠금) 빈 값 — 화면은 첫 분석 안내로 돌아간다.
@@ -351,14 +345,13 @@ public class AssessmentTxService {
         List<Assessment> all = assessmentRepository.findByStoryIdOrderByCreatedAtDesc(storyId);
         List<Assessment> locks = new ArrayList<>();
         for (Assessment a : all) {
-            if (a.getVerdict() != ReunionVerdict.DATING
-                    && a.getVerdict() != ReunionVerdict.REUNITED) {
+            if (a.getVerdict() != ReunionVerdict.REUNITED) {
                 break;
             }
             locks.add(a);
         }
         if (locks.isEmpty()) {
-            throw new BusinessException(ErrorCode.ASSESSMENT_NOT_DATING);
+            throw new BusinessException(ErrorCode.ASSESSMENT_NOT_LOCKED);
         }
         assessmentRepository.deleteAll(locks);
         storyFactService.appendCorrection(storyId, BREAKUP_CONFIRMED_FACT);
@@ -380,8 +373,11 @@ public class AssessmentTxService {
                 .filter(a -> a.getVerdict() == ReunionVerdict.POSSIBLE
                         && Integer.valueOf(100).equals(a.getProbability()))
                 .orElseThrow(() -> new BusinessException(ErrorCode.ASSESSMENT_NOT_OFFER));
-        last.retractOffer(scorer.apply(last.getBreakupType(), last.getJumpRule(),
-                last.getFactors()));
+        // 구파이프라인 판(유형/요인 저장분)만 재합산이 가능하다 — 새 판은 대역이 없어 null로
+        // 되돌리고, 화면이 "다시 분석"으로 안내한다(판은 판독+결정이 다시 만든다).
+        last.retractOffer(last.getBreakupType() == null && last.getFactors().isEmpty()
+                ? null
+                : scorer.apply(last.getBreakupType(), last.getJumpRule(), last.getFactors()));
         storyFactService.appendCorrection(storyId, OFFER_RETRACTED_FACT);
         return AssessmentResponse.from(last);
     }

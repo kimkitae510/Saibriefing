@@ -181,19 +181,18 @@ class AssessmentTxServiceTest {
                 .willReturn(Optional.of(Story.builder().userId(1L).title("사연").build()));
     }
 
+    // 재진단 가드(새 대화 없으면 AS002 거부)는 폐지 — 같은 재료 재분석도 유저의 선택이고
+    // 후차감이라 비용은 본인이 진다. 아래 테스트가 그 폐지를 고정한다.
     @Test
-    @DisplayName("재진단 가드 - 마지막 진단 이후 새 대화가 없으면 거부한다")
-    void loadContext_rejectsWhenNoNewMessages() {
+    @DisplayName("마지막 진단 이후 새 대화가 없어도 재분석을 거부하지 않는다(가드 폐지)")
+    void loadContext_allowsReassessWithoutNewMessages() {
         givenOwnedStory();
         Assessment last = lastAssessment();
         given(assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(STORY_ID))
                 .willReturn(Optional.of(last));
-        given(messageRepository.existsByStoryIdAndCreatedAtAfter(STORY_ID, last.getCreatedAt()))
-                .willReturn(false);
+        givenConversation();
 
-        assertThatThrownBy(() -> txService.loadContext(1L, STORY_ID))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.ASSESSMENT_NO_NEW_MESSAGES);
+        assertThatCode(() -> txService.loadContext(1L, STORY_ID)).doesNotThrowAnyException();
     }
 
     @Test
@@ -213,8 +212,6 @@ class AssessmentTxServiceTest {
         ReflectionTestUtils.setField(last, "createdAt", LocalDateTime.of(2025, 11, 10, 12, 0));
         given(assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(STORY_ID))
                 .willReturn(Optional.of(last));
-        given(messageRepository.existsByStoryIdAndCreatedAtAfter(STORY_ID, last.getCreatedAt()))
-                .willReturn(true);
         givenConversation();
 
         var context = txService.loadContext(1L, STORY_ID);
@@ -224,95 +221,21 @@ class AssessmentTxServiceTest {
     }
 
     @Test
-    @DisplayName("재진단 가드 - 새 대화가 없어도 유저가 직접 적어준 사실이 있으면 통과한다")
-    void loadContext_passesWithUserProvidedFact() {
-        givenOwnedStory();
-        Assessment last = lastAssessment();
-        given(assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(STORY_ID))
-                .willReturn(Optional.of(last));
-        given(messageRepository.existsByStoryIdAndCreatedAtAfter(STORY_ID, last.getCreatedAt()))
-                .willReturn(false);
-        given(storyFactRepository.existsByStoryIdAndSourceAndCreatedAtAfter(
-                STORY_ID, FactSource.USER, last.getCreatedAt())).willReturn(true);
-        givenConversation();
-
-        assertThatCode(() -> txService.loadContext(1L, STORY_ID)).doesNotThrowAnyException();
-    }
-
-    @Test
-    @DisplayName("재진단 가드 - 새 대화가 있으면 통과하고 맥락을 정상 조립한다(추출 사실 여부는 보지 않음)")
-    void loadContext_passesWithNewMessages() {
-        givenOwnedStory();
-        Assessment last = lastAssessment();
-        given(assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(STORY_ID))
-                .willReturn(Optional.of(last));
-        given(messageRepository.existsByStoryIdAndCreatedAtAfter(STORY_ID, last.getCreatedAt()))
-                .willReturn(true);
-        givenConversation();
-
-        assertThatCode(() -> txService.loadContext(1L, STORY_ID)).doesNotThrowAnyException();
-    }
-
-    private StoryFact breakupConfirmedFact(LocalDateTime createdAt) {
-        StoryFact fact = StoryFact.of(STORY_ID, AssessmentTxService.BREAKUP_CONFIRMED_FACT, null);
-        ReflectionTestUtils.setField(fact, "createdAt", createdAt);
-        return fact;
-    }
-
-    @Test
-    @DisplayName("재진단 가드 - 번복(헤어짐 확인)이 진단보다 늦으면 번복 이후 새 대화를 요구한다(진단, 번복 루프 차단)")
-    void loadContext_rejectsWhenNoNewMessagesAfterBreakupConfirm() {
-        givenOwnedStory();
-        Assessment last = lastAssessment(); // 2025-11-10 12:00
-        LocalDateTime confirmedAt = LocalDateTime.of(2025, 11, 11, 3, 0);
-        given(assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(STORY_ID))
-                .willReturn(Optional.of(last));
-        given(storyFactRepository.findFirstByStoryIdAndFactOrderByIdDesc(
-                STORY_ID, AssessmentTxService.BREAKUP_CONFIRMED_FACT))
-                .willReturn(Optional.of(breakupConfirmedFact(confirmedAt)));
-        given(messageRepository.existsByStoryIdAndCreatedAtAfter(STORY_ID, confirmedAt))
-                .willReturn(false); // 늦은 쪽(번복 시각)을 기준으로 물어야 한다
-
-        assertThatThrownBy(() -> txService.loadContext(1L, STORY_ID))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.ASSESSMENT_NO_NEW_MESSAGES);
-    }
-
-    @Test
-    @DisplayName("재진단 가드 - 진단 기록이 없어도 번복 기록이 있으면 그 이후 새 대화를 요구한다(첫 진단부터 잠금이던 사연)")
-    void loadContext_guardsWithOnlyBreakupConfirm() {
-        givenOwnedStory();
-        LocalDateTime confirmedAt = LocalDateTime.of(2025, 11, 11, 3, 0);
-        given(assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(STORY_ID))
-                .willReturn(Optional.empty());
-        given(storyFactRepository.findFirstByStoryIdAndFactOrderByIdDesc(
-                STORY_ID, AssessmentTxService.BREAKUP_CONFIRMED_FACT))
-                .willReturn(Optional.of(breakupConfirmedFact(confirmedAt)));
-        given(messageRepository.existsByStoryIdAndCreatedAtAfter(STORY_ID, confirmedAt))
-                .willReturn(false);
-
-        assertThatThrownBy(() -> txService.loadContext(1L, STORY_ID))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.ASSESSMENT_NO_NEW_MESSAGES);
-    }
-
-    @Test
-    @DisplayName("재진단 가드 - 첫 진단(기록 없음)은 가드 없이 통과한다")
-    void loadContext_firstAssessmentSkipsGuard() {
+    @DisplayName("첫 진단(기록 없음)도 정상 조립된다")
+    void loadContext_firstAssessment() {
         givenOwnedStory();
         given(assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(STORY_ID))
                 .willReturn(Optional.empty());
         givenConversation();
 
         assertThatCode(() -> txService.loadContext(1L, STORY_ID)).doesNotThrowAnyException();
-        verify(messageRepository, never()).existsByStoryIdAndCreatedAtAfter(any(), any());
     }
 
-    private Assessment datingAssessment() {
+    private Assessment reunitedAssessment() {
         Assessment assessment = Assessment.builder()
                 .storyId(STORY_ID)
-                .verdict(ReunionVerdict.DATING)
-                .reason("아직 만나는 중")
+                .verdict(ReunionVerdict.REUNITED)
+                .reason("다시 만나는 중")
                 .build();
         ReflectionTestUtils.setField(assessment, "id", 77L);
         return assessment;
@@ -322,16 +245,16 @@ class AssessmentTxServiceTest {
     @DisplayName("헤어짐 확인 - 잠금 판정을 지우고 직전 확률 진단으로 즉시 복귀한다")
     void confirmBreakup_deletesLockAndRestoresPrevious() {
         givenOwnedStory();
-        Assessment dating = datingAssessment();
+        Assessment reunion = reunitedAssessment();
         Assessment previous = lastAssessment();
         given(assessmentRepository.findByStoryIdOrderByCreatedAtDesc(STORY_ID))
-                .willReturn(List.of(dating, previous));
+                .willReturn(List.of(reunion, previous));
 
         var restored = txService.confirmBreakup(1L, STORY_ID);
 
         assertThat(restored).isPresent();
         assertThat(restored.get().getProbability()).isEqualTo(20); // 재진단 없이 직전 확률로
-        verify(assessmentRepository).deleteAll(List.of(dating));
+        verify(assessmentRepository).deleteAll(List.of(reunion));
         verify(storyFactService).appendCorrection(STORY_ID,
                 AssessmentTxService.BREAKUP_CONFIRMED_FACT);
     }
@@ -341,7 +264,7 @@ class AssessmentTxServiceTest {
     void confirmBreakup_emptyWhenNoPrevious() {
         givenOwnedStory();
         given(assessmentRepository.findByStoryIdOrderByCreatedAtDesc(STORY_ID))
-                .willReturn(List.of(datingAssessment()));
+                .willReturn(List.of(reunitedAssessment()));
 
         assertThat(txService.confirmBreakup(1L, STORY_ID)).isEmpty();
     }
@@ -352,8 +275,8 @@ class AssessmentTxServiceTest {
     @DisplayName("헤어짐 확인 - 잠금 판정이 여러 개 쌓여 있으면 한 번에 다 걷어낸다")
     void confirmBreakup_clearsStackedLocks() {
         givenOwnedStory();
-        Assessment newer = datingAssessment();
-        Assessment older = datingAssessment();
+        Assessment newer = reunitedAssessment();
+        Assessment older = reunitedAssessment();
         Assessment previous = lastAssessment();
         given(assessmentRepository.findByStoryIdOrderByCreatedAtDesc(STORY_ID))
                 .willReturn(List.of(newer, older, previous));
@@ -366,15 +289,15 @@ class AssessmentTxServiceTest {
     }
 
     @Test
-    @DisplayName("헤어짐 확인 - 마지막 판정이 DATING이 아니면 거부한다(원장 오염 방지)")
-    void confirmBreakup_rejectsWhenNotDating() {
+    @DisplayName("헤어짐 확인 - 마지막 판정이 재회 성공 잠금이 아니면 거부한다(원장 오염 방지)")
+    void confirmBreakup_rejectsWhenNotLocked() {
         givenOwnedStory();
         given(assessmentRepository.findByStoryIdOrderByCreatedAtDesc(STORY_ID))
                 .willReturn(List.of(lastAssessment())); // POSSIBLE
 
         assertThatThrownBy(() -> txService.confirmBreakup(1L, STORY_ID))
                 .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.ASSESSMENT_NOT_DATING);
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.ASSESSMENT_NOT_LOCKED);
 
         verifyNoInteractions(storyFactService);
     }
@@ -388,7 +311,7 @@ class AssessmentTxServiceTest {
 
         assertThatThrownBy(() -> txService.confirmBreakup(1L, STORY_ID))
                 .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.ASSESSMENT_NOT_DATING);
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.ASSESSMENT_NOT_LOCKED);
 
         verifyNoInteractions(storyFactService);
     }
@@ -405,16 +328,16 @@ class AssessmentTxServiceTest {
     }
 
     @Test
-    @DisplayName("제안 번복 - 100이면 저장된 신호의 재합산 값으로 즉시 되돌리고 원장에 정정을 남긴다")
-    void retractOffer_recalculatesImmediately() {
+    @DisplayName("제안 번복 - 새 판(유형/요인 없음)은 확률을 비워 재분석을 유도하고 원장에 정정을 남긴다")
+    void retractOffer_clearsProbabilityOnNewPipelineRow() {
         givenOwnedStory();
         given(assessmentRepository.findFirstByStoryIdOrderByCreatedAtDesc(STORY_ID))
                 .willReturn(Optional.of(offerAssessment()));
-        given(scorer.apply(any(), any(), org.mockito.ArgumentMatchers.anyList())).willReturn(40);
 
         var response = txService.retractOffer(1L, STORY_ID);
 
-        assertThat(response.getProbability()).isEqualTo(40); // 재진단(LLM) 없이 즉시 복귀
+        // 재합산 대역(유형, 요인)이 저장돼 있지 않으므로 null 복귀 — 화면은 다시 분석으로 안내.
+        assertThat(response.getProbability()).isNull();
         verify(storyFactService).appendCorrection(STORY_ID,
                 AssessmentTxService.OFFER_RETRACTED_FACT);
     }
@@ -449,9 +372,49 @@ class AssessmentTxServiceTest {
 
     private void givenConversation() {
         Message message = Message.user(Story.builder().userId(1L).title("사연").build(), "걔가 먼저 헤어지자 했어");
-        given(messageRepository.findByStoryIdOrderByIdDesc(eq(STORY_ID), any(Pageable.class)))
-                .willReturn(new SliceImpl<>(List.of(message), PageRequest.of(0, 20), false));
+        given(messageRepository.findByStoryIdOrderByIdAsc(STORY_ID)).willReturn(List.of(message));
         given(storyFactRepository.findByStoryIdOrderByIdDesc(eq(STORY_ID), any(Pageable.class)))
                 .willReturn(List.of());
+    }
+
+    // 탐색 채팅의 유저 답은 짧아서 상담자의 질문 없이는 무엇에 대한 답인지가 사라진다(실측 592).
+    // 양쪽 역할을 시간순으로 다 싣되 누구 말인지 표시하고, 폴백(우리가 대신 낸 안내)은 뺀다.
+    @Test
+    @DisplayName("판독 입력 - 대화 전체를 시간순으로, 역할 표시와 날짜를 붙여 싣고 폴백은 뺀다")
+    void loadConversation_carriesBothRolesInOrder() {
+        Story story = Story.builder().userId(1L).title("사연").build();
+        given(storyRepository.findByIdAndUserIdAndDeletedAtIsNull(STORY_ID, 1L))
+                .willReturn(Optional.of(story));
+        Message first = Message.user(story, "걔가 먼저 헤어지자 했어");
+        ReflectionTestUtils.setField(first, "createdAt", LocalDateTime.of(2026, 9, 1, 3, 0));
+        Message ask = Message.assistant(story, "헤어지고 나서 먼저 연락한 쪽이 있었나요");
+        ReflectionTestUtils.setField(ask, "createdAt", LocalDateTime.of(2026, 9, 1, 3, 1));
+        Message answer = Message.user(story, "내가 한 번");
+        ReflectionTestUtils.setField(answer, "createdAt", LocalDateTime.of(2026, 9, 2, 3, 0));
+        Message fallback = Message.fallback(story);
+        given(messageRepository.findByStoryIdOrderByIdAsc(STORY_ID))
+                .willReturn(List.of(first, ask, answer, fallback));
+
+        List<com.threeam.llm.ChatMessage> conversation = txService.loadConversation(1L, STORY_ID);
+
+        assertThat(conversation).extracting(com.threeam.llm.ChatMessage::content).containsExactly(
+                "(9/1) (사연자) 걔가 먼저 헤어지자 했어",
+                "(9/1) (상담자) 헤어지고 나서 먼저 연락한 쪽이 있었나요",
+                "(9/2) (사연자) 내가 한 번");
+        assertThat(conversation.get(1).role()).isEqualTo(com.threeam.llm.LlmRole.ASSISTANT);
+    }
+
+    @Test
+    @DisplayName("판독 입력 - 유저 발화가 하나도 없으면 ASSESSMENT_NO_MESSAGES")
+    void loadConversation_rejectsWithoutUserMessage() {
+        Story story = Story.builder().userId(1L).title("사연").build();
+        given(storyRepository.findByIdAndUserIdAndDeletedAtIsNull(STORY_ID, 1L))
+                .willReturn(Optional.of(story));
+        given(messageRepository.findByStoryIdOrderByIdAsc(STORY_ID))
+                .willReturn(List.of(Message.assistant(story, "안녕하세요")));
+
+        assertThatThrownBy(() -> txService.loadConversation(1L, STORY_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.ASSESSMENT_NO_MESSAGES);
     }
 }

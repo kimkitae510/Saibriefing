@@ -12,6 +12,7 @@ import com.threeam.assessment.entity.ReunionVerdict;
 import com.threeam.assessment.entity.WatchPoint;
 import com.threeam.assessment.repository.AssessmentReadingRepository;
 import com.threeam.assessment.repository.AssessmentRepository;
+import com.threeam.llm.LlmException;
 import com.threeam.llm.LlmRole;
 import com.threeam.usage.UsageKind;
 import com.threeam.usage.UsageLimiter;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,9 +34,14 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AssessmentService {
 
-    // 사전 가드: 유저 발화가 하나도 없으면 LLM 없이도 "근거 없음"이 자명하다.
-    // 대화가 한 번이라도 있으면 LLM에 보낸다 — 부족 여부는 횟수가 아니라 내용(원장)이 정한다.
+    // 사전 가드: 유저 발화 1회(첫 사연)부터 분석을 연다. 언제 리포트로 넘어갈지는 사연자가 정한다 —
+    // 탐색 채팅이 목표를 다 채우면 권하지만, 그 전에 눌러도 막지 않는다. 근거가 얇으면 판독이
+    // INSUFFICIENT로 돌려보내는 문이 따로 있다.
     private static final int MIN_USER_TURNS = 1;
+
+    // 진행 단계 폴링용 인메모리 표시(단일 인스턴스 전제 — 로그인 가드와 동일).
+    // 값은 LLM 왕복 동안만 존재한다: DIAGNOSIS(판정) → READING(심층 판독) → 제거.
+    private final Map<Long, String> runStage = new ConcurrentHashMap<>();
 
     private final AssessmentTxService txService;
     private final ReunionLlm reunionLlm;
@@ -81,43 +88,72 @@ public class AssessmentService {
                 return CompletableFuture.completedFuture(
                         insufficientGuide(storyId, FAIL_RETRY_GUIDE).withRetryAfterSeconds(retryAfterSeconds));
             }
-            return reunionLlm.diagnose(context.knownFactLines(), context.conversation(),
-                            context.todayLine(), context.previousDigest(), context.intakeBlock())
-                    .thenComposeAsync(diagnosis -> {
-                        PersistResult result = persist(storyId, diagnosis);
-                        // LLM 왕복이 정상 처리됐으니 실패 연속 카운트를 지운다(INSUFFICIENT도 실패가 아니라 판정).
+            runStage.put(storyId, "READING");
+            return readingLlm.readDirect(context.intakeBlock(),
+                            context.todayLine(),
+                            context.conversation().stream()
+                                    .map(com.threeam.llm.ChatMessage::content).toList())
+                    .thenApplyAsync(direct -> {
+                        // LLM 왕복이 정상 처리됐으니 실패 연속 카운트를 지운다.
                         clearAssessFailQuietly(storyId);
-                        if (diagnosis.verdict() == ReunionVerdict.INSUFFICIENT) {
-                            // 분석을 제공하지 못했으니 쿼터를 깎지 않는다(유저 억울함 방지).
-                            // 대신 시점을 DB에 남겨 새 대화 없는 재시도를 위에서 공짜로 막는다.
-                            txService.markInsufficient(storyId);
-                        } else if (diagnosis.verdict() == ReunionVerdict.DATING
-                                || diagnosis.verdict() == ReunionVerdict.REUNITED) {
-                            // 잠금 판정도 확률이 없다 — 유저가 받은 건 안내 한 줄이라 근거부족과
-                            // 성격이 같다. 특히 유저가 "안 헤어졌다"고 정정해 잠금이 뜬 판에서
-                            // 쿼터까지 나가면, 정정한 대가로 분석 한 번을 잃는 꼴이 된다.
-                            // 무한 반복은 재분석 가드(새 대화 없으면 거부)가 막는다.
-                            txService.clearInsufficient(storyId);
-                        } else {
-                            txService.clearInsufficient(storyId);
-                            recordUsageQuietly(userId);
-                        }
-                        return readIfEligible(storyId, diagnosis, result, context);
+                        return applyDirect(storyId, userId, direct);
                     }, llmCallbackExecutor)
                     .whenComplete((ignored, ex) -> {
-                        // 분석 실패(LLM 장애, 저장 실패)를 storyId, userId와 함께 남긴다 —
-                        // 전역 핸들러 로그엔 맥락이 없어 "돈 깎였는데 결과 없음" CS를 추적할 수 없다.
                         if (ex != null) {
                             log.error("분석 처리 실패 storyId={} userId={}", storyId, userId, ex);
                             markAssessFailedQuietly(storyId);
                         }
+                        runStage.remove(storyId);
                         usageLimiter.releaseInFlight(UsageKind.ASSESSMENT, userId);
                     });
         } catch (RuntimeException e) {
             // 후차감이라 되돌릴 차감이 없다. 잠금만 풀고 그대로 던진다.
+            runStage.remove(storyId);
             usageLimiter.releaseInFlight(UsageKind.ASSESSMENT, userId);
             throw e;
         }
+    }
+
+    // 단일 호출 결과를 판정 행과 판독으로 저장한다. 게이트가 POSSIBLE이 아니면
+    // 기존 정책 그대로: 근거부족은 저장 없이 안내(무차감), 잠금 판정은 안내 행만 저장(무차감).
+    private AssessmentResponse applyDirect(Long storyId, Long userId,
+                                           ReadingLlm.DirectReading direct) {
+        String note = direct.gateNote();
+        if ("INSUFFICIENT".equals(direct.caseStatus())) {
+            txService.markInsufficient(storyId);
+            return insufficientGuide(storyId,
+                    note == null || note.isBlank() ? NO_BASIS_GUIDE : note);
+        }
+        if ("REUNITED".equals(direct.caseStatus())) {
+            txService.clearInsufficient(storyId);
+            Assessment locked = Assessment.builder()
+                    .storyId(storyId)
+                    .verdict(ReunionVerdict.REUNITED)
+                    .reason(note == null || note.isBlank() ? REUNITED_GUIDE : note)
+                    .build();
+            Assessment saved = txService.save(storyId, locked, List.of(), null);
+            return AssessmentResponse.from(saved);
+        }
+
+        txService.clearInsufficient(storyId);
+        ReadingDraft draft = direct.draft();
+        Assessment assessment = Assessment.builder()
+                .storyId(storyId)
+                .verdict(ReunionVerdict.POSSIBLE)
+                .reason(reasonSummary(draft.decision()))
+                .build();
+        Assessment saved = txService.save(storyId, assessment, List.of(), null);
+        AssessmentResponse response = AssessmentResponse.from(saved)
+                .withReading(txService.saveReading(storyId, saved.getId(), draft));
+        // 후차감 — 유료 상품의 본체(판독)까지 성사된 여기서만 기록한다.
+        recordUsageQuietly(userId);
+        return response;
+    }
+
+    // 진행 단계 폴링 — LLM 호출도 차감도 없다. 진행 중이 아니면 null.
+    public String progressStage(Long userId, Long storyId) {
+        txService.loadOwnership(userId, storyId);
+        return runStage.get(storyId);
     }
 
     // 쿼터 기록 실패가 이미 저장된 분석 응답을 500으로 오염시키지 않게 격리한다.
@@ -158,52 +194,38 @@ public class AssessmentService {
         return txService.retractOffer(userId, storyId);
     }
 
-    // 판정 저장 결과. saved가 null이면 저장 안 된 임시 응답(INSUFFICIENT)이다.
-    private record PersistResult(Assessment saved, AssessmentResponse response) {
-    }
-
-    // 판독(2호출)은 확률이 있는 일반 판정에만 붙는다. 잠금 판정과 근거부족은 서술할 판이 없고,
-    // 제안 확정(100)은 계산이 아니라 확정 표시라 "왜 이 확률인지"가 성립하지 않는다.
-    // 판독 실패는 삼킨다 — 판정은 이미 저장, 과금됐고 화면은 판정만으로 성립한다.
-    // 실패 시 재시도 창구는 아직 없다(재분석이 곧 재시도) — 반복되면 그때 붙인다.
-    private CompletableFuture<AssessmentResponse> readIfEligible(Long storyId,
-                                                                 ReunionDiagnosis diagnosis,
-                                                                 PersistResult result,
-                                                                 AssessmentContext context) {
-        Assessment saved = result.saved();
-        boolean eligible = saved != null && saved.getVerdict() == ReunionVerdict.POSSIBLE
-                && saved.getProbability() != null && !diagnosis.activeReunionOffer();
-        if (!eligible) {
-            return CompletableFuture.completedFuture(result.response());
-        }
-        // 진단 문장은 1호출이 쓰고, 백엔드는 거기에 순위와 등급을 붙인다 —
-        // 2호출은 그 카드를 읽기만 하고 고쳐 쓰지 못한다(화면과 확률이 어긋난다).
-        String level = scorer.level(saved.getProbability());
-        List<ReadingLlm.DiagnosisCard> cards = scorer.cards(diagnosis, saved.getBreakupType(),
-                saved.getJumpRule(), saved.getFactors());
-        return readingLlm.read(saved, diagnosis, context.intakeBlock(), level, cards)
-                .thenApplyAsync(draft -> {
-                    try {
-                        return result.response()
-                                .withReading(txService.saveReading(storyId, saved.getId(), draft));
-                    } catch (RuntimeException e) {
-                        log.error("판독 저장 실패 storyId={} — 판정만 반환", storyId, e);
-                        return result.response();
-                    }
-                }, llmCallbackExecutor)
-                .exceptionally(ex -> {
-                    log.error("판독 생성 실패 storyId={} — 판정만 반환", storyId, ex);
-                    return result.response();
-                });
-    }
-
     // 화면이 그릴 수 있는 판독인지 — 진단 요약과 진단 항목이 본체다(v7). 비면 리포트로
     // 성립하지 않으므로 내려보내지 않는다(구조 개편 전 본문이 여기서 걸러진다).
+    // 다른 구조로 저장된 본문은 전 필드 null 껍데기로 통과하므로 여기서 한 번 더 거른다.
+    // 본체 검사는 구조 세대별로 다르다: 2단 편집 본문은 1장 블록(prologueBlocks)과
+    // 마음 블록(mindBlocks), 그 이전 저장분은 심층 장(analysisChapters)과 마음 통짜(mind).
     private boolean isRenderable(ReadingDraft report) {
-        return report != null
-                && report.diagnosisSummary() != null && !report.diagnosisSummary().isBlank()
-                && report.diagnosis() != null && !report.diagnosis().isEmpty()
-                && report.actionPlan() != null;
+        if (report == null || report.decision() == null) {
+            return false;
+        }
+        ReadingDraft.Decision d = report.decision();
+        // 새 구조는 판정 카드(verdictBlocks)가 본체고 mind와 분석 장은 카드가 흡수해
+        // 빌 수 있다 — mind를 필수로 걸면 새 판독 전부가 "구조 불일치"로 버려진다
+        // (실측: 저장은 되는데 응답에서 탈락해 실패 화면으로 보였다). 전 필드 null
+        // 껍데기(구조 개편 전 행)만 거르면 된다.
+        boolean hasCards = d.verdictBlocks() != null && !d.verdictBlocks().isEmpty();
+        boolean hasBody = (d.prologueBlocks() != null && !d.prologueBlocks().isEmpty())
+                || (report.analysisChapters() != null && !report.analysisChapters().isEmpty());
+        return hasCards || hasBody;
+    }
+
+    // 이력 목록의 한 줄 요약 — 마음 장의 첫 문단을 쓴다(블록 구조와 통짜 문자열 둘 다 지원).
+    private String reasonSummary(ReadingDraft.Decision decision) {
+        if (decision == null) {
+            return "판독 완료";
+        }
+        if (decision.mind() != null && !decision.mind().isBlank()) {
+            return decision.mind();
+        }
+        if (decision.mindBlocks() != null && !decision.mindBlocks().isEmpty()) {
+            return decision.mindBlocks().get(0).body();
+        }
+        return "판독 완료";
     }
 
     // 감점 목록(@ElementCollection, LAZY)을 매핑에서 읽으므로 트랜잭션 안이어야 한다.
@@ -253,10 +275,9 @@ public class AssessmentService {
     }
 
     // 미분석 사유는 원인별로 갈라 말해준다 — "왜 안 되는지"를 유저가 스스로 고칠 수 있게.
-    // 유저 발화가 아예 없는 경우(사전 가드).
+    // 유저 발화가 2회 미만인 경우(사전 가드). 사연만 있고 확인 질문에 답하기 전이 여기 걸린다.
     private static final String TURNS_GUIDE =
-            "아직 들려주신 이야기가 없습니다. 어쩌다 헤어졌는지, 지금 어떤 상황인지 "
-                    + "먼저 들려주시면 분석할 수 있습니다.";
+            "아직 들려주신 이야기가 없습니다. 사연을 먼저 들려주시면 그때부터 분석할 수 있습니다.";
 
     // 대화는 있었지만 확률을 매길 '사실'이 부족한 경우(LLM 판정, 원장 빈약): 무엇을 말해야 하는지 안내.
     private static final String NO_BASIS_GUIDE =
@@ -270,9 +291,6 @@ public class AssessmentService {
     private static final String FAIL_RETRY_GUIDE =
             "분석을 만들지 못하는 상태가 이어지고 있습니다. 이번 분석은 차감되지 않았습니다.";
 
-    private static final String DATING_GUIDE =
-            "아직 만나고 있는 사이라면 재회 확률은 의미가 없습니다. 지금 겪는 갈등은 대화에서 함께 풀어 봅니다.";
-
     private static final String REUNITED_GUIDE =
             "다시 만나게 되었습니다. 여기서부터는 확률이 아니라 관계를 이어가는 이야기입니다. 대화에서 함께합니다.";
 
@@ -285,81 +303,4 @@ public class AssessmentService {
                 .build());
     }
 
-    private PersistResult persist(Long storyId, ReunionDiagnosis diagnosis) {
-        // 근거 부족은 분석이 아니라 "대화를 더 해달라"는 안내다. 히스토리(확률 추이)를 오염시키지 않도록 저장하지 않고,
-        // reason에 담긴 가이드만 임시 응답으로 돌려준다.
-        // save()에 분석 저장과 요약 갱신, 원장 적재가 함께 묶여 있어 이 분기에선 newFacts도 같이 버려진다.
-        // 유실은 아니다 — 이 판정 뒤엔 재분석 가드가 "대화를 더 하고 오라"고 막고, 그 대화를 채팅 사실
-        // 추출이 같은 구간까지 훑어 원장에 넣는다. 버려지는 건 이번 호출이 뽑아둔 중복분뿐이라
-        // save()를 쪼개면서까지 살릴 값어치는 없다고 봤다(이 주석이 없으면 매번 버그로 의심받는 자리다).
-        if (diagnosis.verdict() == ReunionVerdict.INSUFFICIENT) {
-            String guide = (diagnosis.reason() == null || diagnosis.reason().isBlank())
-                    ? NO_BASIS_GUIDE
-                    : diagnosis.reason();
-            Assessment transientResult = Assessment.builder()
-                    .storyId(storyId)
-                    .verdict(ReunionVerdict.INSUFFICIENT)
-                    .reason(guide)
-                    .build();
-            return new PersistResult(null, AssessmentResponse.from(transientResult));
-        }
-
-        // 잠금 판정(DATING, REUNITED) — 확률 계산을 구조적으로 건너뛴다.
-        // LLM이 실수로 유형이나 요인을 보냈어도 버린다. 총평과 원장은 그대로 저장 —
-        // 저장해야 화면의 최신 결과가 이전 확률 대신 이 판정으로 교체된다.
-        if (diagnosis.verdict() == ReunionVerdict.DATING
-                || diagnosis.verdict() == ReunionVerdict.REUNITED) {
-            String fallback = diagnosis.verdict() == ReunionVerdict.DATING
-                    ? DATING_GUIDE : REUNITED_GUIDE;
-            String reason = (diagnosis.reason() == null || diagnosis.reason().isBlank())
-                    ? fallback
-                    : diagnosis.reason();
-            // 관계 심리는 잠금 판정에도 싣는다 — 사귀는 중이든 재회했든 관계 구조 이해는 유효하다.
-            Assessment assessment = Assessment.builder()
-                    .storyId(storyId)
-                    .verdict(diagnosis.verdict())
-                    .relationshipPsychology(diagnosis.relationshipPsychology())
-                    .reason(reason)
-                    .build();
-            Assessment saved = txService.save(storyId, assessment, diagnosis.newFacts(),
-                    diagnosis.matchProfile());
-            return new PersistResult(saved, AssessmentResponse.from(saved));
-        }
-
-        List<AssessmentFactor> factors = diagnosis.factors().stream()
-                .map(f -> AssessmentFactor.of(f.name(), f.level(), f.evidence(),
-                        f.rationale(), f.stage()))
-                .toList();
-
-        // 확률은 POSSIBLE일 때만. 상대의 유효한 만남/재회 제안이 있으면 유저 수락만 남은
-        // 상태라 대역 계산을 건너뛰고 100으로 확정한다(제안이 회수되면 다음 분석부터 일반 계산).
-        // 유형과 요인은 그대로 저장한다 — 유저가 제안을 번복하면(retract-offer) 재분석 없이
-        // 저장된 판정의 재계산으로 즉시 되돌리기 위한 재료다.
-        boolean offerConfirmed = diagnosis.activeReunionOffer();
-        Integer probability = offerConfirmed ? 100
-                : scorer.apply(diagnosis.breakupType(), diagnosis.jumpRule(), factors);
-
-        Assessment.AssessmentBuilder builder = Assessment.builder()
-                .storyId(storyId)
-                .verdict(diagnosis.verdict())
-                .probability(probability)
-                .breakupType(diagnosis.breakupType())
-                .typeEvidence(blankToNull(diagnosis.typeEvidence()))
-                .jumpRule(diagnosis.jumpRule())
-                .relapseRisk(diagnosis.relapseRisk())
-                .relapseReason(blankToNull(diagnosis.relapseReason()))
-                .relationshipPsychology(diagnosis.relationshipPsychology())
-                .reason(diagnosis.reason())
-                .factors(factors);
-        diagnosis.watchFor().forEach(w -> builder.watchPoint(WatchPoint.of(w.point(), w.effect())));
-        diagnosis.unansweredQuestions().forEach(builder::unansweredQuestion);
-
-        Assessment saved = txService.save(storyId, builder.build(), diagnosis.newFacts(),
-                diagnosis.matchProfile());
-        return new PersistResult(saved, AssessmentResponse.from(saved));
-    }
-
-    private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
-    }
 }

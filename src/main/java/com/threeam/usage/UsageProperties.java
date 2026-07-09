@@ -29,9 +29,9 @@ public class UsageProperties {
     // 생성 락의 자동 만료(TTL). LLM 호출이 실패로 락을 못 풀어도 이 시간이 지나면 풀린 것으로 본다.
     // 반드시 해당 종류의 LLM 타임아웃보다 커야 한다 — 짧으면 아직 진행 중인 생성 위로 두 번째
     // 요청이 만료된 락을 뺏어(acquire의 IF locked_until < now) 동시 생성이 된다.
-    // 채팅 50초 < 60초, 분석 90초 < 100초. 정상 종료든 실패든 콜백에서 즉시 반납하므로
-    // 이 값이 실제로 쓰이는 건 프로세스 강제 종료나 콜백 유실뿐이다.
-    private long chatLockTtlSeconds = 60;
+    // 채팅은 목표 판정(50초)과 답변(50초)이 순차라 합 100초 < 110초. 정상 종료든 실패든 콜백에서
+    // 즉시 반납하므로 이 값이 실제로 쓰이는 건 프로세스 강제 종료나 콜백 유실뿐이다.
+    private long chatLockTtlSeconds = 110;
     private long assessmentLockTtlSeconds = 100;
     // 유료 매칭. 후보 열넷의 본문을 읽는 호출이라 분석과 같은 무게로 잡는다.
     private long matchLockTtlSeconds = 100;

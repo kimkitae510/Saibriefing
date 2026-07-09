@@ -1,7 +1,7 @@
 package com.threeam.match.service;
 
-import com.threeam.assessment.dto.AssessmentContext;
 import com.threeam.assessment.service.AssessmentTxService;
+import com.threeam.llm.ChatMessage;
 import com.threeam.match.CaseStore;
 import com.threeam.match.MatchBand;
 import com.threeam.match.dto.PickedCaseResponse;
@@ -76,8 +76,11 @@ public class PaidMatchService {
                 return CompletableFuture.completedFuture(PickedCasesResponse.of(List.of(), null));
             }
 
-            AssessmentContext context = assessmentTxService.loadContext(userId, storyId);
-            return matchLlm.select(material.digest(), context.conversation(), pool, band)
+            // loadContext가 아니라 이걸 쓴다 — loadContext에는 재분석 가드가 들어 있어서
+            // "마지막 분석 이후 새 이야기가 없다"로 매칭까지 막혔다(실측). 매칭은 이미 나온
+            // 진단에 붙는 일이라 새 대화를 요구할 이유가 없다.
+            List<ChatMessage> conversation = assessmentTxService.loadConversation(userId, storyId);
+            return matchLlm.select(material.digest(), conversation, pool, band)
                     .thenApplyAsync(picked -> {
                         MatchPick.Picks settled = settle(picked, pool, band);
                         // 내가 실제로 저장한 경우에만 깎는다. 이미 다른 요청이 넣어둔 결과라면
