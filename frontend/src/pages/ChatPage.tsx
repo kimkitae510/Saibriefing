@@ -2,12 +2,13 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PhoneFrame } from '../components/PhoneFrame';
 import { HelpModal } from '../components/HelpModal';
-import { CHARACTER_AVATAR, CHARACTER_NAME, GREETING, CharacterProfile } from '../components/CharacterProfile';
+import { CHARACTER_AVATAR, CHARACTER_NAME, CharacterProfile } from '../components/CharacterProfile';
 import { StoryDrawer } from '../components/StoryDrawer';
 import { ReportBookSheet } from '../components/ReportBookSheet';
 import {
   getMessages,
   getMessagesSince,
+  openConversation,
   retryLastReply,
   sendMessage,
   type MessageResponse,
@@ -24,19 +25,6 @@ const MAX_LENGTH = 2000; // 서버 검증(@Size)과 동일 값 — 600자에서�
 // 그래서 애매하면 줄바꿈으로 기운다.
 const ENTER_SENDS_UNDER = 150;
 
-// 방의 첫 화면에 깔리는 상담자의 첫 마디. 저장하지 않고 화면에서만 만든다 — 기록이 아니라
-// 인사라서 대화 횟수도, LLM 호출도, 프롬프트 맥락도 건드리지 않는다.
-// "사용법 안내"를 쓰지 않는 이유: 설명을 읽히는 순간 상담이 아니라 도구가 된다. 대신 분석이
-// 필요로 하는 축(이별 시점, 사유, 이후 연락)을 상담자가 묻는 형태로 담는다.
-// 짐작한 감정으로 말을 열지 않는다(persona의 금지 항목이다) — 첫 줄부터 남의 일처럼 들린다.
-// 마침표를 찍지 않는 것도 페르소나의 호흡이다 — 문장을 닫으면 상담이 아니라 안내문이 된다.
-// 길이 허락("길게 써도 돼")은 넣지 않는다. 입력창이 쓰는 만큼 늘어나니 화면이 이미 하는 말이다.
-// 대신 자세할수록 정확해진다는 인과를 말한다 — 이건 화면이 못 하고, 유저도 모르는 정보다.
-// 예로 드는 셋은 실제로 판을 가장 크게 흔드는 축이다 — 사유는 대역을 정하고, 교제와 이별 후
-// 경과는 유형과 상대신호 판정의 기준이며(1~3개월 구간, 3개월 무반응), 연락 상황은 점프를 가른다.
-// 빈 줄이 아니라 배열 항목이 말풍선 경계이고, 항목 안의 줄바꿈은 한 풍선 안의 줄이다.
-// 문구 자체는 CharacterProfile로 옮겼다 — 첫 화면과 이 화면이 반드시 같은 말을 해야 해서
-// 한 곳에서만 고칠 수 있게 뒀다(따로 두면 한쪽만 고쳐 두 화면이 어긋난다).
 const POLL_INTERVAL = 1500;
 // 이 시간을 넘기면 폴링 간격을 성기게 늦춘다(포기가 아니다). 백엔드 LLM 타임아웃(50초) 안에
 // 답 또는 폴백이 저장되는 게 정상이라, 이 뒤는 지연이 아니라 이상 상황 — 그래도 끝까지 기다린다.
@@ -178,16 +166,6 @@ export function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 첫 화면에서 적은 문장은 그대로 이어 보낸다 — 여기서 다시 치게 하면 시작이 두 번이 된다
-  const autoSentRef = useRef(false);
-  useEffect(() => {
-    const auto = (location.state as { autoSend?: boolean } | null)?.autoSend;
-    if (!auto || autoSentRef.current || !input.trim()) return;
-    autoSentRef.current = true;
-    void handleSend();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input]);
-
   useEffect(() => {
     aliveRef.current = true;
     void loadInitial();
@@ -224,6 +202,21 @@ export function ChatPage() {
       ) {
         setWaiting(true);
         pollForReply(last.id);
+      }
+      // 빈 방 — 상담자가 먼저 말을 건다. 서버는 메시지가 있으면 아무것도 안 하므로 새로고침에도 안전하고,
+      // 실패하면 폴백이 붙어 재시도 버튼이 뜬다(그 재시도도 첫 말을 다시 만든다).
+      if (!last && !page.hasNext) {
+        setWaiting(true);
+        try {
+          await openConversation(storyId);
+          pollForReply(0);
+        } catch (e) {
+          if (!aliveRef.current) return;
+          setWaiting(false);
+          const code = extractErrorCode(e);
+          if (code === 'Q003') setCooldown(extractRetryAfterSeconds(e) ?? 60);
+          else setError(extractErrorMessage(e, '대화를 시작하지 못했습니다. 다시 시도해 주세요.'));
+        }
       }
     } catch (e) {
       if (!aliveRef.current) return;
@@ -565,39 +558,11 @@ export function ChatPage() {
                   이전 대화 더 보기
                 </button>
               )}
-              {/* 빈 방에 "첫 대화를 시작해 보세요"만 두면 무엇을 얼마나 말해야 하는지가 안 보인다 —
-                  가장 쓰기 어려운 화면이다. 지시를 늘리는 대신 상담자가 먼저 말을 걸게 한다.
-                  방의 처음을 보고 있을 때만(더 볼 이전 대화가 없을 때) 띄운다 — 첫 답을 보낸
-                  직후 인사가 사라지면 방금 읽은 말이 지워진 것처럼 보인다 */}
-              {/* 날짜는 인사 위에 둔다 — 인사 아래에 두면 첫 메시지를 보내는 순간 인사와 내 말
-                  사이에 날짜가 끼어들어, 인사만 다른 날에 온 것처럼 보인다. 인사는 이 방이
-                  열린 자리라 첫 메시지와 같은 날 묶음이다(아직 아무 말도 없으면 오늘) */}
-              {!hasOlder && (
-                <div className={styles.divider}>
-                  {formatDateDivider(messages[0]?.createdAt ?? new Date().toISOString())}
-                </div>
+              {/* 날짜는 첫 메시지 위에 — 방의 처음을 보고 있을 때만(더 볼 이전 대화가 없을 때).
+                  인사 말풍선은 없다: 첫 말도 상담자가 서버에서 만들어 보낸 진짜 메시지다 */}
+              {!hasOlder && messages.length > 0 && (
+                <div className={styles.divider}>{formatDateDivider(messages[0].createdAt)}</div>
               )}
-              {!hasOlder &&
-                GREETING.map((seg, i) => (
-                  <div
-                    className={`${styles.msgRow} ${i === 0 ? styles.groupStart : ''}`}
-                    key={`greeting-${i}`}
-                  >
-                    {assistantAvatar(i === 0)}
-                    {withName(
-                      i === 0,
-                      <div
-                        className={`${styles.bubble} ${styles.assistant} ${i === 0 ? styles.tailAssistant : ''}`}
-                      >
-                        {seg.split('\n').map((line, li) => (
-                          <div className={styles.bubbleLine} key={li}>
-                            {line}
-                          </div>
-                        ))}
-                      </div>,
-                    )}
-                  </div>
-                ))}
               {messages.map((m, i) => {
                 const prev = messages[i - 1];
                 const next = messages[i + 1];
@@ -613,7 +578,7 @@ export function ChatPage() {
                   !isSameCalendarDate(next.createdAt, m.createdAt);
                 // 어시스턴트 답은 문단 단위 말풍선으로. 유저 입력은 쓴 그대로 한 덩어리.
                 // 프사와 꼬리가 붙는 자리. 인사 말풍선이 위에 있으면 그쪽이 시현 묶음의 시작이다
-                const startsGroup = prev ? prev.role !== m.role : m.role === 'USER' || hasOlder;
+                const startsGroup = prev ? prev.role !== m.role : true;
                 const segs = m.role === 'USER' ? [m.content] : splitParagraphs(m.content);
                 const shown = reveal?.id === m.id ? Math.min(reveal.shown, segs.length) : segs.length;
                 return (

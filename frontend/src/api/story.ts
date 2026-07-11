@@ -63,6 +63,12 @@ export async function sendMessage(storyId: number, content: string): Promise<Mes
   return data;
 }
 
+// 대화가 없는 방의 첫 말. 상담자가 문진을 읽고 먼저 말을 건다(202, 답은 since?after=0으로 폴링).
+// 메시지가 이미 있으면 서버가 아무것도 안 하므로 새로고침에 안전하다.
+export async function openConversation(storyId: number): Promise<void> {
+  await api.post(`/api/stories/${storyId}/opening`);
+}
+
 // 답을 못 받은 턴의 재시도. 보낸 말은 그대로 두고 답만 다시 만들므로 본문을 싣지 않는다.
 // 서버가 폴백 말풍선을 지우므로 폴링 기준 id를 새로 받아온다(들고 있던 id는 이미 없는 행이다).
 export async function retryLastReply(storyId: number): Promise<{ pollAfterId: number }> {
