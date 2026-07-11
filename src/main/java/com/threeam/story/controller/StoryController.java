@@ -60,6 +60,13 @@ public class StoryController {
                 .body(storyService.sendMessage(userId, storyId, request));
     }
 
+    // 대화가 없는 방의 첫 말. 상담자 답이 백그라운드로 붙고, 화면은 since?after=0으로 폴링한다.
+    @PostMapping("/{storyId}/opening")
+    public ResponseEntity<Void> open(@AuthenticationPrincipal Long userId, @PathVariable Long storyId) {
+        storyService.openConversation(userId, storyId);
+        return ResponseEntity.accepted().build();
+    }
+
     // 답을 못 받은 턴(폴백 말풍선)의 재시도. 유저 메시지는 그대로 두고 답만 다시 만든다 —
     // 같은 말을 다시 치게 하지 않으려는 것이라 새 메시지를 받지 않는다(본문 없음).
     @PostMapping("/{storyId}/messages/retry")

@@ -160,6 +160,18 @@ class GoalJudgeTest {
         verify(chatLlm, never()).judge(anyList(), any());
     }
 
+
+    @Test
+    @DisplayName("판정 - 유저 발화가 없는 첫 말 턴은 LLM을 부르지 않는다")
+    void judge_skipsLlmWithoutUserTurn() {
+        given(storyGoalRepository.findByStoryIdOrderByIdAsc(STORY_ID)).willReturn(List.of());
+
+        GoalJudge.GoalState state = goalJudge.judge(STORY_ID, List.of(), 0).join();
+
+        verify(chatLlm, never()).judge(anyList(), any());
+        assertThat(state.remaining()).hasSize(2);
+    }
+
     private static ChatGoalProperties.Goal goal(String key, String name, String filledWhen) {
         ChatGoalProperties.Goal goal = new ChatGoalProperties.Goal();
         goal.setKey(key);

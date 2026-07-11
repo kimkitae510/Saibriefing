@@ -23,6 +23,10 @@ public class ChatPersonaProperties {
     // 목표가 다 찼거나 턴 상한에 닿은 판의 마무리 규칙. goal-guide 대신 실린다.
     private String closing = "";
 
+    // 대화가 아직 없는 방의 첫 말. 문진만 읽고 상담자가 먼저 말을 거는 자리라, 유저 발화 없이
+    // 이 지시 하나가 user 턴으로 실린다(system만 보내면 Gemini가 contents 없음으로 거절한다).
+    private String opening = "문진에서 받은 것을 짧게 되짚고, 무슨 일이 있었는지 들려달라고 청한다.";
+
     // 프롬프트 맨 끝에 붙는 출력 직전 점검. 비면 미주입.
     private String finalCheck = "";
 }

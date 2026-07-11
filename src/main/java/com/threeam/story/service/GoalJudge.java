@@ -69,7 +69,8 @@ public class GoalJudge {
         }
         List<StoryGoal> saved = storyGoalRepository.findByStoryIdOrderByIdAsc(storyId);
         GoalState before = stateOf(storyId, saved, userTurns);
-        if (before.remaining().isEmpty()) {
+        // 유저 발화가 없으면(첫 말 턴) 채워질 것도 없다 — 호출을 아낀다.
+        if (before.remaining().isEmpty() || userTurns == 0) {
             return CompletableFuture.completedFuture(before);
         }
         try {

@@ -267,6 +267,28 @@ class StoryServiceTest {
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
     }
 
+
+    @Test
+    @DisplayName("첫 말 - 빈 방이면 상담자 답을 백그라운드로 만들고, 메시지가 있으면 아무것도 안 한다")
+    void openConversation() {
+        given(messageTxService.hasAnyMessage(1L, 10L)).willReturn(false);
+        given(chatLlm.reply(anyList())).willReturn(CompletableFuture.completedFuture("무슨 일이 있었나요"));
+        given(messageTxService.appendAssistantReply(10L, "무슨 일이 있었나요"))
+                .willReturn(MessageResponse.from(message(1L, MessageRole.ASSISTANT, "무슨 일이 있었나요")));
+
+        storyService.openConversation(1L, 10L);
+
+        verify(messageTxService).appendAssistantReply(10L, "무슨 일이 있었나요");
+        verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
+
+        // 이미 대화가 있는 방 — 새로고침으로 두 번 불려도 첫 말이 두 번 붙지 않는다
+        given(messageTxService.hasAnyMessage(1L, 20L)).willReturn(true);
+        storyService.openConversation(1L, 20L);
+        verify(messageTxService, never()).appendAssistantReply(eq(20L), any());
+        // 락은 첫 방에서 한 번만 잡혔다
+        verify(usageLimiter, org.mockito.Mockito.times(1)).acquireInFlight(UsageKind.CHAT, 1L);
+    }
+
     @Test
     @DisplayName("답변 재시도 - 유저 메시지를 새로 저장하지 않고 답만 다시 만든다")
     void retryLastReply_success() {

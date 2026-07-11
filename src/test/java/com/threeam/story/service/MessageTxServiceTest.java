@@ -319,6 +319,58 @@ class MessageTxServiceTest {
                 .doesNotContain("---질문---");
     }
 
+
+    @Test
+    @DisplayName("프롬프트 조립 - 대화가 없으면 첫 말 지시가 user 턴으로 실린다(system만 보내면 Gemini가 거절)")
+    void buildPrompt_openingTurnWhenEmpty() {
+        personaProperties.setOpening("첫 말 지시 자리표시자");
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L)).willReturn(List.of());
+
+        List<ChatMessage> prompt = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+
+        assertThat(prompt).filteredOn(m -> m.role() == LlmRole.USER)
+                .extracting(ChatMessage::content)
+                .anyMatch(c -> c.contains("첫 말 지시 자리표시자") && c.contains("시스템 지시"));
+        // 대화가 있으면 첫 말 지시는 없다
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L))
+                .willReturn(List.of(message(MessageRole.USER, "사연이야")));
+        assertThat(messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED))
+                .extracting(ChatMessage::content).noneMatch(c -> c.contains("첫 말 지시 자리표시자"));
+    }
+
+    @Test
+    @DisplayName("프롬프트 조립 - 문진 블록에는 시점과 사실의 기준이라는 머리말이 붙는다")
+    void buildPrompt_intakeBlockHasHeader() {
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L))
+                .willReturn(List.of(message(MessageRole.USER, "사연이야")));
+        com.threeam.story.entity.StoryIntake intake = com.threeam.story.entity.StoryIntake.builder()
+                .storyId(10L).callName("지민").daysSinceBreakup(30).build();
+        given(storyIntakeRepository.findByStoryId(10L)).willReturn(Optional.of(intake));
+
+        List<ChatMessage> prompt = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+
+        assertThat(prompt).filteredOn(m -> m.role() == LlmRole.SYSTEM)
+                .extracting(ChatMessage::content)
+                .anyMatch(c -> c.startsWith("[문진으로 확인된 것") && c.contains("이별 후 경과"));
+    }
+
+    @Test
+    @DisplayName("재시도 준비 - 첫 말이 실패해 폴백만 있는 방은 폴백을 지우고 폴링 기준 0을 돌려준다")
+    void prepareRetry_openingFallbackOnly() {
+        Story story = story(10L);
+        given(storyRepository.findByIdAndUserIdAndDeletedAtIsNull(10L, 1L)).willReturn(Optional.of(story));
+        Message fallback = Message.fallback(story);
+        ReflectionTestUtils.setField(fallback, "id", 3L);
+        given(messageRepository.findByStoryIdOrderByIdDesc(eq(10L), any(Pageable.class)))
+                .willReturn(new SliceImpl<>(List.of(fallback), PageRequest.of(0, 2), false));
+
+        MessageTxService.PreparedRetry prepared = messageTxService.prepareRetry(1L, 10L);
+
+        assertThat(prepared.pollAfterId()).isZero();
+        assertThat(prepared.userContent()).isNull();
+        verify(messageRepository).delete(fallback);
+    }
+
     private Story story(Long id) {
         Story story = Story.builder().userId(1L).title("사연").build();
         ReflectionTestUtils.setField(story, "id", id);

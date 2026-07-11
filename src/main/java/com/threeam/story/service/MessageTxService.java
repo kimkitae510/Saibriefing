@@ -99,19 +99,27 @@ public class MessageTxService {
         // 백그라운드 조립이 방금 지운 폴백을 다시 읽지 않게 먼저 밀어낸다.
         messageRepository.flush();
         Message userMessage = turn.userMessage();
-        return new PreparedRetry(userMessage.getId(), userMessage.getContent());
+        // 첫 말(상담자가 먼저 거는 턴)이 실패한 판은 앞에 유저 메시지가 없다 — 폴링 기준은 0.
+        return userMessage == null
+                ? new PreparedRetry(0L, null)
+                : new PreparedRetry(userMessage.getId(), userMessage.getContent());
     }
 
-    // 마지막이 폴백이고 그 앞이 유저 메시지일 때만 재시도할 것이 있다.
-    // (재시도를 두 번 눌렀거나 그새 정상 답이 붙었으면 여기서 걸린다)
+    // 마지막이 폴백이고 그 앞이 유저 메시지일 때, 또는 폴백이 방의 유일한 메시지일 때(첫 말 실패)만
+    // 재시도할 것이 있다. (재시도를 두 번 눌렀거나 그새 정상 답이 붙었으면 여기서 걸린다)
     private RetriableTurn retriableTurn(Long userId, Long storyId) {
         storyRepository.findByIdAndUserIdAndDeletedAtIsNull(storyId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
         List<Message> recent = messageRepository
                 .findByStoryIdOrderByIdDesc(storyId, PageRequest.of(0, 2))
                 .getContent();
-        if (recent.size() < 2 || !recent.get(0).isFallback()
-                || recent.get(1).getRole() != MessageRole.USER) {
+        if (recent.isEmpty() || !recent.get(0).isFallback()) {
+            throw new BusinessException(ErrorCode.CHAT_RETRY_NOT_APPLICABLE);
+        }
+        if (recent.size() == 1) {
+            return new RetriableTurn(null, recent.get(0));
+        }
+        if (recent.get(1).getRole() != MessageRole.USER) {
             throw new BusinessException(ErrorCode.CHAT_RETRY_NOT_APPLICABLE);
         }
         return new RetriableTurn(recent.get(1), recent.get(0));
@@ -119,8 +127,17 @@ public class MessageTxService {
 
     private record RetriableTurn(Message userMessage, Message fallback) {}
 
-    // 폴링 기준 id(되살릴 답이 붙을 자리)와 원문.
+    // 폴링 기준 id(되살릴 답이 붙을 자리)와 원문. 첫 말 재시도는 0과 null.
     public record PreparedRetry(Long pollAfterId, String userContent) {}
+
+    // 방에 메시지가 하나라도 있는지 — 첫 말을 만들지 말지의 기준.
+    @Transactional(readOnly = true)
+    public boolean hasAnyMessage(Long userId, Long storyId) {
+        storyRepository.findByIdAndUserIdAndDeletedAtIsNull(storyId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
+        return !messageRepository.findByStoryIdOrderByIdDesc(storyId, PageRequest.of(0, 1))
+                .getContent().isEmpty();
+    }
 
     // tx2: LLM 응답을 어시스턴트 메시지로 저장 + 사연 활동시각 갱신.
     @Transactional
@@ -141,10 +158,13 @@ public class MessageTxService {
         // 만큼만 먹으므로 고정분은 여기 두고, 매번 바뀌는 것(문진, 목표, 대화)은 뒤에 둔다.
         prompt.add(ChatMessage.system(personaProperties.getPersona()));
         // 폼으로 받은 기본 정보. 이야기가 시작되기 전의 바탕이라 대화보다 앞이다.
+        // 머리말을 붙인다 — 라벨 없는 줄 몇 개는 대화 속 "오늘" 같은 표현에 밀려 시점을 잃는다(실측:
+        // 경과 1개월을 받고도 "오늘 일어난 일"로 답함). 판독 packet과 같은 머리말이다.
         storyIntakeRepository.findByStoryId(storyId)
                 .map(StoryIntakeService::describe)
                 .filter(block -> block != null && !block.isBlank())
-                .ifPresent(block -> prompt.add(ChatMessage.system(block)));
+                .ifPresent(block -> prompt.add(ChatMessage.system(
+                        "[문진으로 확인된 것 — 대화보다 먼저 받은 답이라 시점과 사실의 기준이다]\n" + block)));
         // 유저가 분석 화면에서 직접 적어준 사실만 싣는다. 추출된 사실은 안 싣는다 —
         // 대화 전체가 그대로 실리므로 그 요약본을 또 주면 같은 말이 두 번 읽힌다.
         List<StoryFact> userFacts = storyFactRepository.findByStoryIdOrderByIdAsc(storyId).stream()
@@ -163,10 +183,16 @@ public class MessageTxService {
         }
         // 대화 전체를 시간순으로, 역할 그대로. 창을 두지 않는다 — 대화는 시간 상한으로 짧게
         // 유지되고, 잘라 보내면 상담자가 앞에서 들은 것을 다시 묻는다.
-        for (Message message : messageRepository.findByStoryIdOrderByIdAsc(storyId)) {
+        List<Message> transcript = messageRepository.findByStoryIdOrderByIdAsc(storyId);
+        for (Message message : transcript) {
             prompt.add(message.getRole() == MessageRole.USER
                     ? ChatMessage.user(message.getContent())
                     : ChatMessage.assistant(message.getContent()));
+        }
+        // 대화가 없는 방 — 상담자가 먼저 말을 거는 첫 턴. 지시를 user 턴으로 싣는다(속성 주석 참고).
+        if (transcript.isEmpty()) {
+            prompt.add(ChatMessage.user("(유저가 보낸 말이 아니라 시스템 지시다. 이 지시 자체에 답하지 말고"
+                    + " 첫 말을 건네라.)\n" + personaProperties.getOpening()));
         }
         // 출력 직전 점검은 반드시 대화 뒤, 프롬프트의 맨 끝이다 — 앞에 두면 페르소나 중간의
         // 규칙과 같은 자리가 되어 묻힌다. 여기가 마지막으로 읽히는 지시라는 게 이 블록의 전부다.

@@ -114,6 +114,26 @@ public class StoryService {
         }
     }
 
+    // 대화가 없는 방에서 상담자가 먼저 말을 건다. 문진을 읽고 첫 질문을 만드는 LLM 턴이라 전송과
+    // 같은 락과 쿨다운을 탄다. 메시지가 이미 있으면 아무것도 안 한다(새로고침, 두 번 호출에 안전).
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void openConversation(Long userId, Long storyId) {
+        if (messageTxService.hasAnyMessage(userId, storyId)) {
+            return;
+        }
+        usageLimiter.acquireInFlight(UsageKind.CHAT, userId);
+        try {
+            int retryAfterSeconds = chatRetryGuard.blockedSeconds(userId);
+            if (retryAfterSeconds > 0) {
+                throw new RetryAfterException(ErrorCode.CHAT_RETRY_COOLDOWN, retryAfterSeconds);
+            }
+            generateInBackground(userId, storyId);
+        } catch (RuntimeException e) {
+            usageLimiter.releaseInFlight(UsageKind.CHAT, userId);
+            throw e;
+        }
+    }
+
     // 답을 못 받은 턴(폴백 말풍선)을 유저가 다시 시도한다. 같은 말을 다시 타이핑시키지 않으려는 것이라
     // 유저 메시지는 그대로 두고 답만 새로 만든다. 생성 락, 연속 실패 가드는 전송과 똑같이 태운다 —
     // 재시도도 실제 호출 비용이라 여기가 빠지면 가드를 우회하는 문이 된다.
