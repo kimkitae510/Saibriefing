@@ -22,8 +22,8 @@ import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-// Anthropic Messages API 호출 — 정밀 판독(2호출) 실험 전용 경로.
-// LLM_READING_PROVIDER=anthropic일 때 ReadingLlm이 기존 deep 호출 대신 이걸 탄다.
+// Anthropic Messages API 호출 — 정밀 판독 실험(LLM_READING_PROVIDER=anthropic)과
+// 탐색 채팅(LLM_ANTHROPIC_CHAT_MODEL) 두 경로. 모델, 상한, 추론 세기만 호출마다 다르다.
 //
 // 스트리밍으로 받는다. 판독은 출력이 크고 thinking까지 얹혀 한 번에 다 받으면 응답이
 // 도착하기 전에 클라이언트가 먼저 끊는다(실측: 180초 타임아웃). 스트림은 헤더가 즉시
@@ -36,7 +36,9 @@ public class AnthropicMessagesClient {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final long RETRY_DELAY_SECONDS = 2;
     // thinking(기본 켜짐)과 리포트 본문이 한 상한을 같이 쓴다 — 빠듯하면 응답이 중간에 잘린다.
-    private static final int MAX_TOKENS = 32000;
+    private static final int READING_MAX_TOKENS = 32000;
+    // 채팅 답은 짧지만 thinking이 같은 상한을 쓴다(실측 평균 출력 500 안팎).
+    private static final int CHAT_MAX_TOKENS = 8000;
 
     private final ObjectMapper objectMapper;
     private final AnthropicProperties properties;
@@ -69,36 +71,61 @@ public class AnthropicMessagesClient {
                     new IllegalStateException("ANTHROPIC_API_KEY가 비어 있다 — 판독 프로바이더 설정 확인"));
         }
         Map<String, Object> schema = StrictJsonSchema.fromGoogle(googleSchema);
-        return send(messages, schema)
+        Call call = new Call("판독", properties.getReadingModel(), READING_MAX_TOKENS, null,
+                properties.getReadingTimeoutSeconds());
+        return send(call, messages, schema)
                 .thenCompose(response -> exceedsGrammarLimit(response)
-                        ? send(withSchemaInPrompt(messages, schema), null)
+                        ? send(call, withSchemaInPrompt(messages, schema), null)
                         : CompletableFuture.completedFuture(response))
-                .thenApply(this::readStream)
-                .whenComplete((result, ex) -> Metrics.counter("llm.calls",
-                        "provider", "anthropic",
-                        "result", ex == null ? "success" : "error",
-                        "reason", ex == null ? "none" : "call_failed").increment());
+                .thenApply(response -> readStream(call, response))
+                .whenComplete((result, ex) -> countCall(call, ex));
     }
 
-    private CompletableFuture<Response> send(List<ChatMessage> messages,
+    // 탐색 채팅 답(산문). 실패하면 예외로 끝나고, 다른 경로로 넘기는 판단은 ChatLlm이 한다.
+    public CompletableFuture<String> generateChatText(List<ChatMessage> messages) {
+        if (!properties.chatEnabled()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("anthropic 채팅 모델이나 키가 비어 있다 — 채팅 프로바이더 설정 확인"));
+        }
+        Call call = new Call("채팅", properties.getChatModel(), CHAT_MAX_TOKENS,
+                properties.getChatEffort(), properties.getChatTimeoutSeconds());
+        return send(call, messages, null)
+                .thenApply(response -> readStream(call, response))
+                .whenComplete((result, ex) -> countCall(call, ex));
+    }
+
+    // 호출마다 달라지는 것만 묶는다. effort가 null이면 모델 기본값.
+    private record Call(String kind, String model, int maxTokens, String effort, long timeoutSeconds) {
+    }
+
+    // 태그 키는 다른 클라이언트의 llm.calls와 같아야 한다 — Prometheus는 키가 다른 같은 이름을 거부한다.
+    private void countCall(Call call, Throwable ex) {
+        Metrics.counter("llm.calls",
+                "provider", "anthropic",
+                "result", ex == null ? "success" : "error",
+                "reason", ex == null ? "none" : "call_failed").increment();
+    }
+
+    private CompletableFuture<Response> send(Call call, List<ChatMessage> messages,
                                              Map<String, Object> schema) {
-        return sendOnce(messages, schema).thenCompose(response -> {
+        return sendOnce(call, messages, schema).thenCompose(response -> {
             // 529/503은 잠깐 기다렸다 1회 재시도. 429(한도)와 4xx는 다시 보내도 같은 결과라 그대로 둔다.
             if (response.status() != 529 && response.status() != 503) {
                 return CompletableFuture.completedFuture(response);
             }
-            log.warn("anthropic 판독 {}(과부하) — {}초 뒤 1회 재시도", response.status(), RETRY_DELAY_SECONDS);
+            log.warn("anthropic {} {}(과부하) — {}초 뒤 1회 재시도", call.kind(), response.status(),
+                    RETRY_DELAY_SECONDS);
             Metrics.counter("llm.retries", "provider", "anthropic", "reason", "overloaded")
                     .increment();
             return CompletableFuture.supplyAsync(() -> null,
                             CompletableFuture.delayedExecutor(RETRY_DELAY_SECONDS, TimeUnit.SECONDS))
-                    .thenCompose(ignored -> sendOnce(messages, schema));
+                    .thenCompose(ignored -> sendOnce(call, messages, schema));
         });
     }
 
-    private CompletableFuture<Response> sendOnce(List<ChatMessage> messages,
+    private CompletableFuture<Response> sendOnce(Call call, List<ChatMessage> messages,
                                                  Map<String, Object> schema) {
-        return httpClient.sendAsync(buildRequest(messages, schema),
+        return httpClient.sendAsync(buildRequest(call, messages, schema),
                         HttpResponse.BodyHandlers.ofLines())
                 .thenApply(http -> http.statusCode() / 100 == 2
                         ? new Response(http.statusCode(), null, http.body())
@@ -140,7 +167,7 @@ public class AnthropicMessagesClient {
         return out;
     }
 
-    private HttpRequest buildRequest(List<ChatMessage> messages, Map<String, Object> schema) {
+    private HttpRequest buildRequest(Call call, List<ChatMessage> messages, Map<String, Object> schema) {
         StringBuilder system = new StringBuilder();
         List<Map<String, Object>> turns = new ArrayList<>();
         for (ChatMessage message : messages) {
@@ -157,19 +184,25 @@ public class AnthropicMessagesClient {
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", properties.getReadingModel());
-        body.put("max_tokens", MAX_TOKENS);
+        body.put("model", call.model());
+        body.put("max_tokens", call.maxTokens());
         body.put("stream", true);
-        // 지시 전문(guide+사전)은 호출마다 동일 — 캐시 표시를 붙이면 재요청 입력이 약 1/10 단가가 된다.
+        // 지시 전문은 호출마다 동일 — 캐시 표시를 붙이면 재요청 입력이 약 1/10 단가가 된다.
+        // 모델별 최소 길이에 못 미치면 캐시가 조용히 안 걸릴 뿐 오류는 아니다.
         body.put("system", List.of(Map.of(
                 "type", "text",
                 "text", system.toString(),
                 "cache_control", Map.of("type", "ephemeral"))));
         body.put("messages", turns);
+        Map<String, Object> outputConfig = new LinkedHashMap<>();
         if (schema != null) {
-            body.put("output_config", Map.of("format", Map.of(
-                    "type", "json_schema",
-                    "schema", schema)));
+            outputConfig.put("format", Map.of("type", "json_schema", "schema", schema));
+        }
+        if (call.effort() != null && !call.effort().isBlank()) {
+            outputConfig.put("effort", call.effort());
+        }
+        if (!outputConfig.isEmpty()) {
+            body.put("output_config", outputConfig);
         }
 
         try {
@@ -177,7 +210,7 @@ public class AnthropicMessagesClient {
                     .uri(URI.create(ENDPOINT))
                     // 스트리밍이라 이 상한은 첫 응답(헤더)까지만 잰다. 본문이 오래 흐르는 것은
                     // 정상이므로 여기서 끊지 않는다 — 판독이 길어졌다고 실패시키지 않기 위함이다.
-                    .timeout(Duration.ofSeconds(properties.getReadingTimeoutSeconds()))
+                    .timeout(Duration.ofSeconds(call.timeoutSeconds()))
                     .header("x-api-key", properties.getApiKey())
                     .header("anthropic-version", "2023-06-01")
                     .header("content-type", "application/json")
@@ -189,10 +222,10 @@ public class AnthropicMessagesClient {
         }
     }
 
-    private String readStream(Response response) {
+    private String readStream(Call call, Response response) {
         if (response.events() == null) {
             String body = response.errorBody() == null ? "" : response.errorBody();
-            log.error("anthropic 판독 응답 오류: status={} body={}", response.status(),
+            log.error("anthropic {} 응답 오류: status={} body={}", call.kind(), response.status(),
                     body.substring(0, Math.min(body.length(), 500)));
             throw new LlmException();
         }
@@ -241,18 +274,18 @@ public class AnthropicMessagesClient {
             });
         }
 
-        logUsage(tokens);
+        logUsage(call, tokens);
 
         if ("refusal".equals(stopReason[0])) {
-            log.error("anthropic 판독 거절(refusal)");
+            log.error("anthropic {} 거절(refusal)", call.kind());
             throw new LlmException();
         }
         if ("max_tokens".equals(stopReason[0])) {
-            log.error("anthropic 판독 응답이 max_tokens에 잘림 — 상한 상향 필요");
+            log.error("anthropic {} 응답이 max_tokens에 잘림 — 상한 상향 필요", call.kind());
             throw new LlmException();
         }
         if (text.isEmpty()) {
-            log.error("anthropic 판독 응답이 비어 있음 — stop_reason={}", stopReason[0]);
+            log.error("anthropic {} 응답이 비어 있음 — stop_reason={}", call.kind(), stopReason[0]);
             throw new LlmException();
         }
         return text.toString();
@@ -270,19 +303,20 @@ public class AnthropicMessagesClient {
     }
 
     // 호출당 실제 토큰과 추정 비용을 남긴다 — "실제 얼마 나가는지"는 이 실측 로그와 콘솔 청구서로 본다.
-    private void logUsage(long[] tokens) {
-        double[] price = properties.effectivePrices();
+    private void logUsage(Call call, long[] tokens) {
+        double[] price = properties.effectivePrices(call.model());
         double usd = (tokens[0] * price[0] + tokens[1] * price[1]
                 + tokens[2] * price[2] + tokens[3] * price[3]) / 1_000_000;
         if (usd == 0) {
-            log.info("anthropic[판독 {}] 토큰: 신규입력 {} / 캐시읽기 {} / 캐시생성 {} / 출력+추론 {} — 단가 미설정",
-                    properties.getReadingModel(), tokens[0], tokens[1], tokens[2], tokens[3]);
+            log.info("anthropic[{} {}] 토큰: 신규입력 {} / 캐시읽기 {} / 캐시생성 {} / 출력+추론 {} — 단가 미설정",
+                    call.kind(), call.model(), tokens[0], tokens[1], tokens[2], tokens[3]);
             return;
         }
         // 기존 제미니 경로가 같은 이름을 summary로 쓴다 — 타입이 다르면 등록이 거부된다(실측 경고).
-        Metrics.summary("llm.cost.usd", "provider", "anthropic", "kind", "reading").record(usd);
-        log.info("anthropic[판독 {}] 토큰: 신규입력 {} / 캐시읽기 {} / 캐시생성 {} / 출력+추론 {} — 비용 약 {}원 (정가 기준, 환율 {})",
-                properties.getReadingModel(), tokens[0], tokens[1], tokens[2], tokens[3],
+        Metrics.summary("llm.cost.usd", "provider", "anthropic",
+                "kind", "채팅".equals(call.kind()) ? "chat" : "reading").record(usd);
+        log.info("anthropic[{} {}] 토큰: 신규입력 {} / 캐시읽기 {} / 캐시생성 {} / 출력+추론 {} — 비용 약 {}원 (정가 기준, 환율 {})",
+                call.kind(), call.model(), tokens[0], tokens[1], tokens[2], tokens[3],
                 Math.round(usd * properties.getUsdKrw()), Math.round(properties.getUsdKrw()));
     }
 }

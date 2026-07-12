@@ -124,6 +124,12 @@ llm:
     api-key: ${ANTHROPIC_API_KEY:}
     reading-model: ${LLM_READING_MODEL:claude-sonnet-5}
     reading-timeout-seconds: ${LLM_READING_TIMEOUT_SECONDS:180}
+    # 탐색 채팅 모델(예: claude-haiku-5-5). 비우면 채팅은 OpenAI 채팅 모델, 그것도 없으면 LLM_PROVIDER로 돈다.
+    # 실패나 거절이면 그 다음 경로로 1회 넘긴다.
+    chat-model: ${LLM_ANTHROPIC_CHAT_MODEL:}
+    chat-effort: ${LLM_ANTHROPIC_CHAT_EFFORT:medium}
+    # 실패 시 넘겨받는 경로의 상한과 합쳐도 채팅 잠금(110초)보다 짧게 — 그래서 OpenAI 채팅(50초)보다 짧다.
+    chat-timeout-seconds: ${LLM_ANTHROPIC_CHAT_TIMEOUT_SECONDS:30}
     usd-krw: ${LLM_USD_KRW:1400}
   # OpenAI — 정밀 판독(2호출) 실험 경로. LLM_READING_PROVIDER=openai일 때만 탄다.
   # 단가는 표로 안 들고 주입만 받는다 — 계열과 이름이 자주 바뀌는 구간이라 틀린 표가
