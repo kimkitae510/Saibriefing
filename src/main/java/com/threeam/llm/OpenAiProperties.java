@@ -60,6 +60,18 @@ public class OpenAiProperties {
     // 아예 없을 때만). 비우면 파라미터를 보내지 않는다.
     private String reasoningEffort = "low";
 
+    // 채팅 전용 추론 강도. 판독을 medium으로 올려도 채팅은 low에 묶어둔다 — 대화는 추론이 아니라
+    // 반응이라 올려도 나아지지 않고, 턴이 잦아 추론 토큰이 곧 비용이다. 비우면 공통 설정을 따른다.
+    private String chatReasoningEffort = "low";
+
+    public String effectiveChatReasoningEffort() {
+        return chatReasoningEffort == null || chatReasoningEffort.isBlank() ? reasoningEffort : chatReasoningEffort;
+    }
+
+    // 웹 검색 도구 호출 1건당 USD(요금 페이지 "Web search: $10.00 / 1k calls", 2026-09-17). 검색 결과 본문은
+    // 모델 단가로 입력 토큰에 따로 잡힌다. 0이면 계산을 건너뛴다.
+    private double priceWebSearchCall = 0.01;
+
     // 100만 토큰당 USD.
     private double priceInput = 0;
     private double priceCachedInput = 0;

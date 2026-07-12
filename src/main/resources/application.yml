@@ -140,6 +140,8 @@ llm:
     # 채팅 대기 상한. usage.chat-lock-ttl-seconds보다 작아야 한다(GeminiProperties timeout-seconds와 같은 이유).
     chat-timeout-seconds: ${LLM_OPENAI_CHAT_TIMEOUT_SECONDS:50}
     reasoning-effort: ${LLM_OPENAI_REASONING_EFFORT:low}
+    # 채팅 전용 추론 강도. 판독 강도를 올려도 채팅은 따라 오르지 않는다. 비우면 위 값.
+    chat-reasoning-effort: ${LLM_OPENAI_CHAT_REASONING_EFFORT:medium}
     price-input: ${LLM_OPENAI_PRICE_INPUT:0}
     price-cached-input: ${LLM_OPENAI_PRICE_CACHED_INPUT:0}
     price-output: ${LLM_OPENAI_PRICE_OUTPUT:0}
