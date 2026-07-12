@@ -21,12 +21,14 @@ out/
 application-local.yml
 application-secret.yml
 persona*.yml
-goals*.yml
 reminder.yml
 extractor.yml
 rubric*.yml
 reading*.yml
 chip-*.yml
+
+### 옛 판 보관함 — 폴더 안은 루트 패턴(/*.yml)에 안 걸리므로 통째로 따로 제외한다 ###
+보관/
 
 ### 루트의 md, yml, py는 전부 서비스 자산이나 로컬 메모다 — 통째로 제외 (하위 폴더의 README, application*.yml은 무관) ###
 /*.md
