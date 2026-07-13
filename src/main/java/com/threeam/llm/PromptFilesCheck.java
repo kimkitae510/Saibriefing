@@ -27,9 +27,12 @@ public class PromptFilesCheck {
         // 페르소나와 루브릭은 자리표시자 기본값이 있어 '비었는지'로는 못 가른다 — 길이로 본다.
         // 실문구는 수천 자 단위라 이 기준에 걸리면 파일이 안 읽힌 것이 확실하다.
         warnIfPlaceholder("persona.yml", "llm.chat.persona", chatProperties.getPersona());
+        long examples = chatProperties.getExamples() == null ? 0
+                : chatProperties.getExamples().stream().filter(ChatPersonaProperties.Example::filled).count();
+        log.info("채팅 예시 턴 {}쌍 (llm.chat.examples)", examples);
         // 목표는 비면 판정 자체를 건너뛴다 — 자유 대화로 조용히 돌기 때문에 여기서 한 번 알린다.
         if (!goalProperties.enabled()) {
-            log.warn("탐색 목표 미주입: llm.goals(judge, items)가 비어 있다 — goals.yml이 없거나 안 읽혔다. "
+            log.warn("탐색 목표 미주입: llm.goals(judge, items)가 비어 있다 — persona.yml의 llm.goals가 없거나 안 읽혔다. "
                     + "채팅은 목표 없는 자유 대화로 돈다.");
         }
         warnIfPlaceholder("extractor.yml", "llm.extraction.prompt", extractionProperties.getPrompt());

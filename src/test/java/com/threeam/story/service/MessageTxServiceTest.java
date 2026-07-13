@@ -59,6 +59,9 @@ class MessageTxServiceTest {
         return properties;
     }
 
+    @Spy
+    private ChatGoalProperties goalProperties = new ChatGoalProperties();
+
     @Mock
     private StoryRepository storyRepository;
 
@@ -114,6 +117,39 @@ class MessageTxServiceTest {
     }
 
     @Test
+    @DisplayName("프롬프트 조립 - 예시는 페르소나 바로 뒤에 상담자가 이미 한 턴(user, assistant)으로 실리고, why와 경계 한 줄이 따른다")
+    void buildPrompt_examplesAsTurnsRightAfterPersona() {
+        ChatPersonaProperties.Example example = new ChatPersonaProperties.Example();
+        example.setUser("예시 사연");
+        example.setAssistant("예시 답");
+        example.setWhy("이 답이 좋은 이유");
+        personaProperties.setExampleIntro("아래는 사고를 보여 주는 대화다");
+        ChatPersonaProperties.Example blank = new ChatPersonaProperties.Example();
+        personaProperties.setExamples(List.of(example, blank));
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L)).willReturn(List.of(
+                message(MessageRole.USER, "사연이야")));
+
+        List<ChatMessage> prompt = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+
+        assertThat(prompt).extracting(ChatMessage::role).containsExactly(
+                LlmRole.SYSTEM, LlmRole.SYSTEM, LlmRole.USER, LlmRole.ASSISTANT, LlmRole.SYSTEM, LlmRole.SYSTEM,
+                LlmRole.USER, LlmRole.SYSTEM);
+        assertThat(prompt.get(1).content()).isEqualTo("아래는 사고를 보여 주는 대화다"); // 예시 앞 한 줄
+        assertThat(prompt.get(2).content()).isEqualTo("예시 사연");
+        assertThat(prompt.get(3).content()).isEqualTo("예시 답");
+        assertThat(prompt.get(4).content()).isEqualTo("이 답이 좋은 이유"); // why는 답 바로 뒤
+        assertThat(prompt.get(5).content()).isEqualTo(personaProperties.getExampleNote());
+        // 비어 있는 예시 항목은 건너뛴다
+        assertThat(prompt).extracting(ChatMessage::content).doesNotContain("");
+
+        // 예시를 비우면 턴도 경계 줄도 없다
+        personaProperties.setExamples(List.of());
+        List<ChatMessage> without = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+        assertThat(without).extracting(ChatMessage::role).containsExactly(
+                LlmRole.SYSTEM, LlmRole.USER, LlmRole.SYSTEM);
+    }
+
+    @Test
     @DisplayName("프롬프트 조립 - 페르소나, 대화 전체(양쪽 역할, 시간순), 맨 끝 점검 순이다")
     void buildPrompt_personaThenWholeConversationThenFinalCheck() {
         given(messageRepository.findByStoryIdOrderByIdAsc(10L)).willReturn(List.of(
@@ -132,37 +168,112 @@ class MessageTxServiceTest {
         assertThat(prompt.get(prompt.size() - 1).content()).isEqualTo(FINAL_CHECK);
         // 목표가 꺼져 있으면 목표 블록 자체가 없다
         assertThat(prompt).extracting(ChatMessage::content)
-                .noneMatch(c -> c.contains("[탐색 목표]"))
                 .doesNotContain(GOAL_GUIDE, CLOSING);
     }
 
     @Test
-    @DisplayName("프롬프트 조립 - 목표 블록은 채워진 것과 근거, 남은 것과 묻는 꼴을 싣고 사용 규칙이 뒤따른다")
-    void buildPrompt_goalBlockCarriesFilledAndRemaining() {
+    @DisplayName("프롬프트 조립 - 축이 없어도 유저 턴이 상한에 닿으면 마무리 규칙이 실린다")
+    void buildPrompt_closingAtTurnCapWithoutGoals() {
+        goalProperties.setMaxUserTurns(2);
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L)).willReturn(List.of(
+                message(MessageRole.USER, "사연이야"),
+                message(MessageRole.ASSISTANT, "그때 뭐라고 했나요"),
+                message(MessageRole.USER, "시간을 갖자고 했어")));
+
+        List<ChatMessage> prompt = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+
+        assertThat(prompt).extracting(ChatMessage::content).contains(CLOSING);
+
+        goalProperties.setMaxUserTurns(3);
+        List<ChatMessage> before = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+        assertThat(before).extracting(ChatMessage::content).doesNotContain(CLOSING);
+    }
+
+    @Test
+    @DisplayName("프롬프트 조립 - 유저가 말하기 전의 상담자 첫 말(대본)은 프롬프트에 싣지 않는다")
+    void buildPrompt_skipsScriptedOpeningBeforeFirstUserMessage() {
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L)).willReturn(List.of(
+                message(MessageRole.ASSISTANT, "이제 본격적으로 상담을 시작해보겠습니다."),
+                message(MessageRole.USER, "사연이야"),
+                message(MessageRole.ASSISTANT, "그때 뭐라고 했나요"),
+                message(MessageRole.USER, "시간을 갖자고 했어")));
+
+        List<ChatMessage> prompt = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+
+        assertThat(prompt).extracting(ChatMessage::content)
+                .doesNotContain("이제 본격적으로 상담을 시작해보겠습니다.")
+                .contains("그때 뭐라고 했나요");
+        assertThat(prompt.get(1).role()).isEqualTo(LlmRole.USER);
+    }
+
+    @Test
+    @DisplayName("프롬프트 조립 - 기준 파일이 있으면 그 전문이 페르소나 바로 뒤에 실리고, 못 읽으면 없이 간다")
+    void buildPrompt_knowledgeFileRightAfterPersona() throws Exception {
         given(messageRepository.findByStoryIdOrderByIdAsc(10L))
                 .willReturn(List.of(message(MessageRole.USER, "사연이야")));
-        ChatGoalProperties.Goal remaining = goal("contact", "접점 현황", "번호가 살아 있는지 같은 것을 묻는다");
+        java.nio.file.Path file = java.nio.file.Files.createTempFile("knowledge", ".md");
+        java.nio.file.Files.writeString(file, "기준 자리표시자\n");
+        personaProperties.setKnowledgeFile(file.toString());
+
+        List<ChatMessage> prompt = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+
+        assertThat(prompt.get(1).role()).isEqualTo(LlmRole.SYSTEM);
+        assertThat(prompt.get(1).content()).isEqualTo("기준 자리표시자");
+
+        personaProperties.setKnowledgeFile(file.resolveSibling("없는-파일.md").toString());
+        List<ChatMessage> without = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+        assertThat(without).extracting(ChatMessage::content).doesNotContain("기준 자리표시자");
+        assertThat(without.get(1).role()).isEqualTo(LlmRole.USER);
+    }
+
+
+
+
+
+    @Test
+    @DisplayName("프롬프트 조립 - 목표 블록은 사용 규칙 뒤에 남은 목표를 전부 이름과 채움 기준으로 싣는다(채워진 것, 구획 이름 없음)")
+    void buildPrompt_goalBlockListsAllRemaining() {
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L))
+                .willReturn(List.of(message(MessageRole.USER, "사연이야")));
+        ChatGoalProperties.Goal a = new ChatGoalProperties.Goal();
+        a.setKey("contact"); a.setName("접점 현황"); a.setFilledWhen("번호가 살아 있는지가 나옴");
+        ChatGoalProperties.Goal b = new ChatGoalProperties.Goal();
+        b.setKey("usual"); b.setName("평소의 둘"); b.setFilledWhen("싸우면 누가 먼저 풀었는지가 나옴");
         GoalJudge.GoalState goals = new GoalJudge.GoalState(
                 List.of(new GoalJudge.FilledGoal("role", "상대에게 어떤 존재였나", "걔한텐 내가 유일한 편이었어")),
-                List.of(remaining), false);
+                List.of(a, b), false);
 
         List<ChatMessage> prompt = messageTxService.promptFor(10L, goals);
 
         assertThat(prompt).filteredOn(m -> m.role() == LlmRole.SYSTEM)
                 .extracting(ChatMessage::content)
-                .anyMatch(c -> c.contains("[탐색 목표]")
-                        && c.contains("상대에게 어떤 존재였나 — 걔한텐 내가 유일한 편이었어")
-                        && c.contains("접점 현황 — 번호가 살아 있는지 같은 것을 묻는다")
-                        && c.endsWith(GOAL_GUIDE))
-                // 아직 안 찬 판이라 마무리 규칙은 안 실린다
-                .noneMatch(c -> c.contains(CLOSING));
+                .anyMatch(c -> c.equals(GOAL_GUIDE
+                        + "\n접점 현황: 번호가 살아 있는지가 나옴"
+                        + "\n평소의 둘: 싸우면 누가 먼저 풀었는지가 나옴"))
+                .noneMatch(c -> c.contains("걔한텐 내가 유일한 편이었어") || c.contains(CLOSING));
+    }
+
+    @Test
+    @DisplayName("프롬프트 조립 - 목표에 묻는 문장(ask)이 있으면 그것을 대신 싣는다")
+    void buildPrompt_goalAskOverridesFilledWhen() {
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L))
+                .willReturn(List.of(message(MessageRole.USER, "사연이야")));
+        GoalJudge.GoalState goals = new GoalJudge.GoalState(List.of(),
+                List.of(goal("contact", "접점 현황", "번호가 살아 있는지 같은 것을 묻는다")), false);
+
+        List<ChatMessage> prompt = messageTxService.promptFor(10L, goals);
+
+        assertThat(prompt).extracting(ChatMessage::content)
+                .anyMatch(c -> c.endsWith("번호가 살아 있는지 같은 것을 묻는다"));
     }
 
     @Test
     @DisplayName("프롬프트 조립 - 목표가 다 찼거나 상한에 닿으면 사용 규칙 대신 마무리 규칙이 실린다")
     void buildPrompt_closingWhenGoalsDoneOrCapped() {
-        given(messageRepository.findByStoryIdOrderByIdAsc(10L))
-                .willReturn(List.of(message(MessageRole.USER, "사연이야")));
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L)).willReturn(List.of(
+                message(MessageRole.USER, "사연이야"),
+                message(MessageRole.ASSISTANT, "그때 뭐라고 했나요"),
+                message(MessageRole.USER, "시간을 갖자고 했어")));
         GoalJudge.GoalState complete = new GoalJudge.GoalState(
                 List.of(new GoalJudge.FilledGoal("role", "상대에게 어떤 존재였나", "근거")), List.of(), false);
 
@@ -170,7 +281,7 @@ class MessageTxServiceTest {
 
         assertThat(done).filteredOn(m -> m.role() == LlmRole.SYSTEM)
                 .extracting(ChatMessage::content)
-                .anyMatch(c -> c.contains("남은 것: 없음") && c.endsWith(CLOSING))
+                .anyMatch(c -> c.equals(CLOSING))
                 .noneMatch(c -> c.contains(GOAL_GUIDE));
 
         // 덜 찼어도 턴 상한에 닿은 판은 마무리로 넘긴다 — 회피하는 유저에게 같은 질문이 영영 이어지지 않게
@@ -181,7 +292,8 @@ class MessageTxServiceTest {
 
         assertThat(late).filteredOn(m -> m.role() == LlmRole.SYSTEM)
                 .extracting(ChatMessage::content)
-                .anyMatch(c -> c.contains("접점 현황") && c.endsWith(CLOSING));
+                .anyMatch(c -> c.equals(CLOSING))
+                .noneMatch(c -> c.contains("접점 현황"));
     }
 
     @Test
@@ -197,7 +309,7 @@ class MessageTxServiceTest {
 
         assertThat(prompt).filteredOn(m -> m.role() == LlmRole.SYSTEM)
                 .extracting(ChatMessage::content)
-                .anyMatch(c -> c.contains("직접 적어준 사실") && c.contains("상대가 먼저 이별을 통보함"))
+                .anyMatch(c -> c.equals("상대가 먼저 이별을 통보함"))
                 .noneMatch(c -> c.contains("추출된 사실"));
     }
 
@@ -360,37 +472,38 @@ class MessageTxServiceTest {
 
 
     @Test
-    @DisplayName("프롬프트 조립 - 대화가 없으면 첫 말 지시가 user 턴으로 실린다(system만 보내면 Gemini가 거절)")
-    void buildPrompt_openingTurnWhenEmpty() {
-        personaProperties.setOpening("첫 말 지시 자리표시자");
-        given(messageRepository.findByStoryIdOrderByIdAsc(10L)).willReturn(List.of());
+    @DisplayName("첫 말 대본 - 있으면 LLM 없이 그대로 저장하고 true, 비어 있으면 저장 없이 false")
+    void appendScriptedOpening() {
+        Story story = story(10L);
+        given(storyRepository.findById(10L)).willReturn(Optional.of(story));
+        given(messageRepository.save(any(Message.class))).willAnswer(inv -> inv.getArgument(0));
+        personaProperties.setOpening("이야기를 들어보겠습니다.");
 
-        List<ChatMessage> prompt = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
+        assertThat(messageTxService.appendScriptedOpening(10L)).isTrue();
+        org.mockito.ArgumentCaptor<Message> saved = org.mockito.ArgumentCaptor.forClass(Message.class);
+        verify(messageRepository).save(saved.capture());
+        assertThat(saved.getValue().getRole()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(saved.getValue().getContent()).isEqualTo("이야기를 들어보겠습니다.");
 
-        assertThat(prompt).filteredOn(m -> m.role() == LlmRole.USER)
-                .extracting(ChatMessage::content)
-                .anyMatch(c -> c.contains("첫 말 지시 자리표시자") && c.contains("시스템 지시"));
-        // 대화가 있으면 첫 말 지시는 없다
-        given(messageRepository.findByStoryIdOrderByIdAsc(10L))
-                .willReturn(List.of(message(MessageRole.USER, "사연이야")));
-        assertThat(messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED))
-                .extracting(ChatMessage::content).noneMatch(c -> c.contains("첫 말 지시 자리표시자"));
+        personaProperties.setOpening("");
+        assertThat(messageTxService.appendScriptedOpening(10L)).isFalse();
     }
 
     @Test
-    @DisplayName("프롬프트 조립 - 문진 블록에는 시점과 사실의 기준이라는 머리말이 붙는다")
+    @DisplayName("프롬프트 조립 - 문진 블록은 구획 이름 없이 줄만 실린다")
     void buildPrompt_intakeBlockHasHeader() {
         given(messageRepository.findByStoryIdOrderByIdAsc(10L))
                 .willReturn(List.of(message(MessageRole.USER, "사연이야")));
         com.threeam.story.entity.StoryIntake intake = com.threeam.story.entity.StoryIntake.builder()
-                .storyId(10L).callName("지민").daysSinceBreakup(30).build();
+                .storyId(10L).daysSinceBreakup(30).build();
         given(storyIntakeRepository.findByStoryId(10L)).willReturn(Optional.of(intake));
 
         List<ChatMessage> prompt = messageTxService.promptFor(10L, GoalJudge.GoalState.DISABLED);
 
         assertThat(prompt).filteredOn(m -> m.role() == LlmRole.SYSTEM)
                 .extracting(ChatMessage::content)
-                .anyMatch(c -> c.startsWith("[문진으로 확인된 것") && c.contains("이별 후 경과"));
+                .anyMatch(c -> c.startsWith("이름:") || c.contains("이별 후 경과"))
+                .noneMatch(c -> c.startsWith("["));
     }
 
     @Test
@@ -408,6 +521,19 @@ class MessageTxServiceTest {
         assertThat(prepared.pollAfterId()).isZero();
         assertThat(prepared.userContent()).isNull();
         verify(messageRepository).delete(fallback);
+    }
+
+    @Test
+    @DisplayName("프롬프트 조립 - 유저가 아직 한 마디도 안 한 방(첫 말 턴)에는 목표를 싣지 않는다")
+    void buildPrompt_noGoalsBeforeUserSpeaks() {
+        given(messageRepository.findByStoryIdOrderByIdAsc(10L)).willReturn(List.of());
+        GoalJudge.GoalState goals = new GoalJudge.GoalState(
+                List.of(), List.of(goal("contact", "접점 현황", "번호가 살아 있는지 같은 것을 묻는다")), false);
+
+        List<ChatMessage> prompt = messageTxService.promptFor(10L, goals);
+
+        assertThat(prompt).extracting(ChatMessage::content)
+                .noneMatch(c -> c.contains("번호가 살아 있는지") || c.contains(GOAL_GUIDE));
     }
 
     private Story story(Long id) {

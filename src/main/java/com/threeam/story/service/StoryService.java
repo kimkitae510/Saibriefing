@@ -114,11 +114,15 @@ public class StoryService {
         }
     }
 
-    // 대화가 없는 방에서 상담자가 먼저 말을 건다. 문진을 읽고 첫 질문을 만드는 LLM 턴이라 전송과
-    // 같은 락과 쿨다운을 탄다. 메시지가 이미 있으면 아무것도 안 한다(새로고침, 두 번 호출에 안전).
+    // 대화가 없는 방에서 상담자가 먼저 말을 건다. 대본(persona.yml opening)이 있으면 그대로 저장하고
+    // 끝 — LLM도 락도 없다. 대본이 없을 때만 persona로 첫 말을 만드는 LLM 턴이라 전송과 같은 락과
+    // 쿨다운을 탄다. 메시지가 이미 있으면 아무것도 안 한다(새로고침, 두 번 호출에 안전).
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void openConversation(Long userId, Long storyId) {
         if (messageTxService.hasAnyMessage(userId, storyId)) {
+            return;
+        }
+        if (messageTxService.appendScriptedOpening(storyId)) {
             return;
         }
         usageLimiter.acquireInFlight(UsageKind.CHAT, userId);

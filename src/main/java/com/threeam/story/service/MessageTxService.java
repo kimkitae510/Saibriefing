@@ -45,6 +45,7 @@ public class MessageTxService {
 
     // 페르소나 실문구는 저장소 밖(persona.yml, gitignore)에서 주입된다. 코드에는 자리표시 기본값만 있다.
     private final ChatPersonaProperties personaProperties;
+    private final ChatGoalProperties goalProperties;
     private final StoryRepository storyRepository;
     private final MessageRepository messageRepository;
     private final StoryFactRepository storyFactRepository;
@@ -131,6 +132,20 @@ public class MessageTxService {
     // 폴링 기준 id(되살릴 답이 붙을 자리)와 원문. 첫 말 재시도는 0과 null.
     public record PreparedRetry(Long pollAfterId, String userContent) {}
 
+    // 첫 말 대본이 있으면 그대로 저장한다(LLM 없음). 대본이 비어 있으면 false — 호출부가 LLM으로 만든다.
+    @Transactional
+    public boolean appendScriptedOpening(Long storyId) {
+        String script = personaProperties.getOpening();
+        if (script == null || script.isBlank()) {
+            return false;
+        }
+        Story story = storyRepository.findById(storyId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
+        messageRepository.save(Message.assistant(story, script.strip()));
+        story.touch();
+        return true;
+    }
+
     // 방에 메시지가 하나라도 있는지 — 첫 말을 만들지 말지의 기준.
     @Transactional(readOnly = true)
     public boolean hasAnyMessage(Long userId, Long storyId) {
@@ -160,42 +175,75 @@ public class MessageTxService {
         // 페르소나가 프롬프트의 맨 앞이자 유일한 고정 지시 블록이다. 캐싱은 앞에서부터 똑같은
         // 만큼만 먹으므로 고정분은 여기 두고, 매번 바뀌는 것(문진, 목표, 대화)은 뒤에 둔다.
         prompt.add(ChatMessage.system(personaProperties.getPersona()));
-        // 폼으로 받은 기본 정보. 이야기가 시작되기 전의 바탕이라 대화보다 앞이다.
-        // 머리말을 붙인다 — 라벨 없는 줄 몇 개는 대화 속 "오늘" 같은 표현에 밀려 시점을 잃는다(실측:
-        // 경과 1개월을 받고도 "오늘 일어난 일"로 답함). 판독 packet과 같은 머리말이다.
+        // 판독과 같은 기준을 상담자도 든다. 고정분이라 페르소나 바로 뒤(캐시 구간).
+        String knowledge = loadKnowledge();
+        if (knowledge != null) {
+            prompt.add(ChatMessage.system(knowledge));
+        }
+        // 답의 모양은 규칙으로 못 가르치고 본 것으로 배운다. 예시는 상담자가 이미 한 턴으로 싣는다 —
+        // 시스템 글로 넣으면 설명서로 읽고 틀만 베꼈다(실측). 고정분이라 페르소나 뒤(캐시 구간).
+        List<ChatPersonaProperties.Example> examples = personaProperties.getExamples();
+        if (examples != null) {
+            boolean any = false;
+            for (ChatPersonaProperties.Example example : examples) {
+                if (!example.filled()) {
+                    continue;
+                }
+                String intro = personaProperties.getExampleIntro();
+                if (!any && intro != null && !intro.isBlank()) {
+                    prompt.add(ChatMessage.system(intro.strip()));
+                }
+                prompt.add(ChatMessage.user(example.getUser().strip()));
+                prompt.add(ChatMessage.assistant(example.getAssistant().strip()));
+                // 왜 이 답인지를 답 바로 뒤에 붙인다. 모양만 보면 어미와 문형을 베끼고, 이유가 있어야 다른 사연에 옮긴다.
+                String why = example.getWhy();
+                if (why != null && !why.isBlank()) {
+                    prompt.add(ChatMessage.system(why.strip()));
+                }
+                any = true;
+            }
+            String note = personaProperties.getExampleNote();
+            if (any && note != null && !note.isBlank()) {
+                prompt.add(ChatMessage.system(note.strip()));
+            }
+        }
+        // 폼으로 받은 기본 정보. 이야기가 시작되기 전의 바탕이라 대화보다 앞이다. 구획 이름 없이
+        // 줄만 싣는다 — 모델을 틀로 통제할수록 답이 틀을 닮아간다.
         storyIntakeRepository.findByStoryId(storyId)
                 .map(StoryIntakeService::describe)
                 .filter(block -> block != null && !block.isBlank())
-                .ifPresent(block -> prompt.add(ChatMessage.system(
-                        "[문진으로 확인된 것 — 대화보다 먼저 받은 답이라 시점과 사실의 기준이다]\n" + block)));
+                .ifPresent(block -> prompt.add(ChatMessage.system(block)));
         // 유저가 분석 화면에서 직접 적어준 사실만 싣는다. 추출된 사실은 안 싣는다 —
         // 대화 전체가 그대로 실리므로 그 요약본을 또 주면 같은 말이 두 번 읽힌다.
-        List<StoryFact> userFacts = storyFactRepository.findByStoryIdOrderByIdAsc(storyId).stream()
+        List<String> userFacts = storyFactRepository.findByStoryIdOrderByIdAsc(storyId).stream()
                 .filter(fact -> fact.getSource() == FactSource.USER)
+                .map(StoryFact::getFact)
                 .toList();
         if (!userFacts.isEmpty()) {
-            StringBuilder block = new StringBuilder("유저가 분석 화면에서 직접 적어준 사실:");
-            for (StoryFact fact : userFacts) {
-                block.append("\n- ").append(fact.getFact());
-            }
-            prompt.add(ChatMessage.system(block.toString()));
+            prompt.add(ChatMessage.system(String.join("\n", userFacts)));
         }
-        String goalBlock = goalBlock(goals);
+        List<Message> transcript = messageRepository.findByStoryIdOrderByIdAsc(storyId);
+        // 목표는 유저가 한 번이라도 말한 뒤부터 싣는다. 이야기가 하나도 없는 첫 턴에 물을 목록만 주면
+        // 상담자가 첫 말부터 목록을 집어 묻고, 사연자는 하고 싶던 이야기를 꺼낼 자리를 잃는다(실측).
+        long userTurns = transcript.stream().filter(m -> m.getRole() == MessageRole.USER).count();
+        String goalBlock = userTurns > 0 ? goalBlock(goals, userTurns) : null;
         if (goalBlock != null) {
             prompt.add(ChatMessage.system(goalBlock));
         }
         // 대화 전체를 시간순으로, 역할 그대로. 창을 두지 않는다 — 대화는 시간 상한으로 짧게
         // 유지되고, 잘라 보내면 상담자가 앞에서 들은 것을 다시 묻는다.
-        List<Message> transcript = messageRepository.findByStoryIdOrderByIdAsc(storyId);
+        // 유저가 말하기 전의 상담자 메시지(첫 말 대본)는 뺀다. 화면엔 나가지만 모델이 그 문체와
+        // "질문이 이어진다"는 선언을 자기 앞 턴으로 읽고 따라간다(실측) — 대본은 모델의 말이 아니다.
+        boolean userStarted = false;
         for (Message message : transcript) {
+            if (message.getRole() == MessageRole.USER) {
+                userStarted = true;
+            } else if (!userStarted) {
+                continue;
+            }
             prompt.add(message.getRole() == MessageRole.USER
                     ? ChatMessage.user(message.getContent())
                     : ChatMessage.assistant(message.getContent()));
-        }
-        // 대화가 없는 방 — 상담자가 먼저 말을 거는 첫 턴. 지시를 user 턴으로 싣는다(속성 주석 참고).
-        if (transcript.isEmpty()) {
-            prompt.add(ChatMessage.user("(유저가 보낸 말이 아니라 시스템 지시다. 이 지시 자체에 답하지 말고"
-                    + " 첫 말을 건네라.)\n" + personaProperties.getOpening()));
         }
         // 출력 직전 점검은 반드시 대화 뒤, 프롬프트의 맨 끝이다 — 앞에 두면 페르소나 중간의
         // 규칙과 같은 자리가 되어 묻힌다. 여기가 마지막으로 읽히는 지시라는 게 이 블록의 전부다.
@@ -206,36 +254,62 @@ public class MessageTxService {
         return prompt;
     }
 
-    // 목표 현황 블록. 코드는 데이터(채워진 것과 근거, 남은 것과 묻는 꼴)만 만들고, 그걸 어떻게
-    // 쓸지는 로컬 yml(goal-guide, closing)이 말한다. 목표가 꺼져 있으면 블록 자체가 없다.
-    private String goalBlock(GoalJudge.GoalState goals) {
-        if (goals == null || goals.total() == 0) {
+    private String cappedClosing(long userTurns) {
+        int cap = goalProperties == null ? 0 : goalProperties.getMaxUserTurns();
+        if (cap <= 0 || userTurns < cap) {
             return null;
         }
-        StringBuilder block = new StringBuilder("[탐색 목표]");
-        if (goals.filled().isEmpty()) {
-            block.append("\n채워진 것: 아직 없음");
-        } else {
-            block.append("\n채워진 것(근거는 유저가 한 말):");
-            for (GoalJudge.FilledGoal filled : goals.filled()) {
-                block.append("\n- ").append(filled.name()).append(" — ").append(filled.evidence());
-            }
+        String closing = personaProperties.getClosing();
+        return closing == null || closing.isBlank() ? null : closing.strip();
+    }
+
+    // knowledge-file이 비면 null. 파일을 못 읽어도 대화는 멈추지 않는다 — 경고만 남기고 기준 없이 간다.
+    private String loadKnowledge() {
+        String file = personaProperties.getKnowledgeFile();
+        if (file == null || file.isBlank()) {
+            return null;
         }
-        if (goals.remaining().isEmpty()) {
-            block.append("\n남은 것: 없음");
-        } else {
-            block.append("\n남은 것(위가 우선):");
-            for (ChatGoalProperties.Goal goal : goals.remaining()) {
-                block.append("\n- ").append(goal.getName());
-                if (goal.getAsk() != null && !goal.getAsk().isBlank()) {
-                    block.append(" — ").append(goal.getAsk().strip());
-                }
-            }
+        try {
+            String text = java.nio.file.Files.readString(java.nio.file.Path.of(file));
+            return text.isBlank() ? null : text.strip();
+        } catch (Exception e) {
+            log.warn("채팅 기준 파일을 읽지 못해 기준 없이 진행: {} — {}", file, e.toString());
+            return null;
         }
-        String guide = goals.closing() ? personaProperties.getClosing() : personaProperties.getGoalGuide();
+    }
+
+    // 아직 안 나온 목표를 전부 싣는다. 무엇을 물을지는 모델이 대화를 보고 고른다 — 코드가 하나를 찍어 주면
+    // 그걸 그대로 베껴 묻고(실측), 돌려 주면 이미 답한 축이 다시 온다(실측). 각 줄은 "이름: 뭐가 나와야 하는지"이고
+    // 묻는 문장은 안 준다. yml의 goal-guide가 맨 앞, 다 찼거나 상한에 닿았으면 closing만 나간다.
+    private String goalBlock(GoalJudge.GoalState goals, long userTurns) {
+        if (goals == null || goals.total() == 0) {
+            return cappedClosing(userTurns);
+        }
+        if (goals.closing()) {
+            String closing = personaProperties.getClosing();
+            return closing == null || closing.isBlank() ? null : closing.strip();
+        }
+        StringBuilder block = new StringBuilder();
+        String guide = personaProperties.getGoalGuide();
         if (guide != null && !guide.isBlank()) {
-            block.append("\n\n").append(guide.strip());
+            block.append(guide.strip());
+        }
+        for (ChatGoalProperties.Goal goal : goals.remaining()) {
+            if (block.length() > 0) {
+                block.append("\n");
+            }
+            block.append(hintLine(goal));
         }
         return block.toString();
+    }
+
+    private static String hintLine(ChatGoalProperties.Goal goal) {
+        if (goal.getAsk() != null && !goal.getAsk().isBlank()) {
+            return goal.getAsk().strip();
+        }
+        if (goal.getFilledWhen() != null && !goal.getFilledWhen().isBlank()) {
+            return goal.getName() + ": " + goal.getFilledWhen().strip();
+        }
+        return goal.getName();
     }
 }

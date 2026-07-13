@@ -272,6 +272,7 @@ class StoryServiceTest {
     @DisplayName("첫 말 - 빈 방이면 상담자 답을 백그라운드로 만들고, 메시지가 있으면 아무것도 안 한다")
     void openConversation() {
         given(messageTxService.hasAnyMessage(1L, 10L)).willReturn(false);
+        given(messageTxService.appendScriptedOpening(10L)).willReturn(false);
         given(chatLlm.reply(anyList())).willReturn(CompletableFuture.completedFuture("무슨 일이 있었나요"));
         given(messageTxService.appendAssistantReply(10L, "무슨 일이 있었나요"))
                 .willReturn(MessageResponse.from(message(1L, MessageRole.ASSISTANT, "무슨 일이 있었나요")));
@@ -280,6 +281,12 @@ class StoryServiceTest {
 
         verify(messageTxService).appendAssistantReply(10L, "무슨 일이 있었나요");
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
+
+        // 대본이 있으면 LLM도 락도 없이 저장만 하고 끝
+        given(messageTxService.hasAnyMessage(1L, 30L)).willReturn(false);
+        given(messageTxService.appendScriptedOpening(30L)).willReturn(true);
+        storyService.openConversation(1L, 30L);
+        verify(messageTxService, never()).appendAssistantReply(eq(30L), any());
 
         // 이미 대화가 있는 방 — 새로고침으로 두 번 불려도 첫 말이 두 번 붙지 않는다
         given(messageTxService.hasAnyMessage(1L, 20L)).willReturn(true);
