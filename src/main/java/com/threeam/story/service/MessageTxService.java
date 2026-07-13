@@ -75,7 +75,25 @@ public class MessageTxService {
     // 목표 판정이 끝난 뒤 백그라운드에서 부른다. 조회만 하지만 지연 로딩과 원장 조회가 있어 트랜잭션 안이다.
     @Transactional(readOnly = true)
     public List<ChatMessage> promptFor(Long storyId, GoalJudge.GoalState goals) {
-        return buildPrompt(storyId, goals);
+        List<ChatMessage> prompt = buildPrompt(storyId, goals);
+        dumpPrompt(storyId, prompt);
+        return prompt;
+    }
+
+    // 실제로 보낸 프롬프트를 통째로 남긴다. "프롬프트가 제대로 들어갔나"를 토큰 수로 추리하지 않으려고.
+    // 판독의 last-reading-packet.txt와 같은 자리, 매 턴 덮어쓴다. 실패해도 대화는 멈추지 않는다.
+    private void dumpPrompt(Long storyId, List<ChatMessage> prompt) {
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("storyId=").append(storyId).append(" at ").append(java.time.LocalDateTime.now()).append('\n');
+            for (ChatMessage message : prompt) {
+                sb.append("\n===== ").append(message.role()).append(" =====\n").append(message.content()).append('\n');
+            }
+            java.nio.file.Files.createDirectories(java.nio.file.Path.of("logs"));
+            java.nio.file.Files.writeString(java.nio.file.Path.of("logs", "last-chat-prompt.txt"), sb.toString());
+        } catch (Exception e) {
+            log.warn("채팅 프롬프트 덤프 실패: {}", e.toString());
+        }
     }
 
     private String titleFrom(String content) {
