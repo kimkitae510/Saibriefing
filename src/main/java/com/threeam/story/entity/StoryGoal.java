@@ -16,7 +16,7 @@ import org.hibernate.annotations.CreationTimestamp;
 
 // 탐색 채팅이 채운 목표 한 건. 행이 있으면 채워진 것이고 없으면 아직이다 —
 // 상태 컬럼을 두지 않는 이유는 "채워졌다가 다시 빈다"가 없어서다(관측은 되돌리지 않는다).
-// 목표 정의(무엇을 물어야 하는지)는 goals.yml에 있고 여기엔 키와 근거 발화만 남는다.
+// 목표 정의(무엇을 물어야 하는지)는 persona.yml의 llm.goals에 있고 여기엔 키와 근거 발화만 남는다.
 @Entity
 @Table(name = "story_goals",
         indexes = @Index(name = "idx_story_goals_story", columnList = "story_id"),

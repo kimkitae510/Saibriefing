@@ -57,7 +57,7 @@ class GoalJudgeTest {
     }
 
     @Test
-    @DisplayName("판정 - 남은 목표만 지시에 싣고, 대화는 역할 표시와 함께 시간순으로 넘긴다")
+    @DisplayName("판정 - 남은 목표만 지시에 싣고, 대화는 라벨 없이 역할 그대로 시간순으로 넘긴다")
     void judge_promptCarriesRemainingGoalsAndTranscript() {
         given(storyGoalRepository.findByStoryIdOrderByIdAsc(STORY_ID))
                 .willReturn(List.of(StoryGoal.filled(STORY_ID, "role", "걔한텐 내가 유일한 편이었어")));
@@ -73,9 +73,11 @@ class GoalJudgeTest {
         assertThat(prompt.get(0).role()).isEqualTo(LlmRole.SYSTEM);
         // 이미 찬 목표(role)는 다시 판정하지 않는다
         assertThat(prompt.get(0).content()).contains("contact: 접점 현황").doesNotContain("role:");
-        assertThat(prompt.get(1).content())
-                .contains("(사연자) 사연이야")
-                .contains("(상담자) 먼저 연락한 쪽이 있었나요");
+        assertThat(prompt.get(0).content()).doesNotContain("[");
+        assertThat(prompt.get(1).role()).isEqualTo(LlmRole.USER);
+        assertThat(prompt.get(1).content()).isEqualTo("사연이야");
+        assertThat(prompt.get(2).role()).isEqualTo(LlmRole.ASSISTANT);
+        assertThat(prompt.get(2).content()).isEqualTo("먼저 연락한 쪽이 있었나요");
     }
 
     @Test
@@ -167,6 +169,18 @@ class GoalJudgeTest {
         given(storyGoalRepository.findByStoryIdOrderByIdAsc(STORY_ID)).willReturn(List.of());
 
         GoalJudge.GoalState state = goalJudge.judge(STORY_ID, List.of(), 0).join();
+
+        verify(chatLlm, never()).judge(anyList(), any());
+        assertThat(state.remaining()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("판정 - 스위치가 꺼져 있으면 LLM을 안 부르고 목표는 전부 남은 것으로 둔다")
+    void judge_skipsLlmWhenDisabled() {
+        goalProperties.setJudgeEnabled(false);
+        given(storyGoalRepository.findByStoryIdOrderByIdAsc(STORY_ID)).willReturn(List.of());
+
+        GoalJudge.GoalState state = goalJudge.judge(STORY_ID, List.of(message(MessageRole.USER, "사연")), 1).join();
 
         verify(chatLlm, never()).judge(anyList(), any());
         assertThat(state.remaining()).hasSize(2);

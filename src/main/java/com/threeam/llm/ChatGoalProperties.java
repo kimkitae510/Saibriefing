@@ -6,7 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-// 탐색 채팅이 채워야 할 목표 목록과 그 판정 지시. 실문구는 로컬 goals.yml(gitignore)로 주입한다.
+// 탐색 채팅이 채워야 할 목표 목록과 그 판정 지시. 실문구는 로컬 persona.yml(gitignore)로 주입한다.
 // 목표가 무엇인지(무엇을 물어야 판독이 서는지)는 서비스 자산이라 코드에 두지 않는다 —
 // 코드는 목록을 읽어 채워진 것과 남은 것을 가르고 프롬프트에 데이터로 실을 뿐이다.
 @Getter
@@ -15,7 +15,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class ChatGoalProperties {
 
     // 목표 판정 호출의 지시문. 비면 판정을 돌리지 않는다(목표 없는 자유 대화로 돈다).
+    // 실문구는 persona.yml의 llm.goals 아래(채팅 프롬프트는 파일 하나).
     private String judge = "";
+
+    // 판정 호출 스위치. 끄면 매 턴 판정 LLM을 안 부르고, 목표는 전부 "아직 안 물은 것"으로 남아
+    // 채팅 프롬프트에 묻는 꼴이 그대로 실린다 — 판정 없이 목표 목록만 주고 돌려보는 용도.
+    private boolean judgeEnabled = true;
 
     // 유저 발화가 이만큼 쌓이면 목표가 덜 찼어도 마무리로 넘긴다 — 회피하는 유저에게
     // 같은 질문이 영영 이어지지 않게 하는 탈출구. 0이면 상한 없음.

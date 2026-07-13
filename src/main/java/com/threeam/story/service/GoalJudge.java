@@ -69,8 +69,8 @@ public class GoalJudge {
         }
         List<StoryGoal> saved = storyGoalRepository.findByStoryIdOrderByIdAsc(storyId);
         GoalState before = stateOf(storyId, saved, userTurns);
-        // 유저 발화가 없으면(첫 말 턴) 채워질 것도 없다 — 호출을 아낀다.
-        if (before.remaining().isEmpty() || userTurns == 0) {
+        // 유저 발화가 없으면(첫 말 턴) 채워질 것도 없다 — 호출을 아낀다. 스위치가 꺼져 있어도 안 부른다.
+        if (before.remaining().isEmpty() || userTurns == 0 || !goalProperties.isJudgeEnabled()) {
             return CompletableFuture.completedFuture(before);
         }
         try {
@@ -112,21 +112,23 @@ public class GoalJudge {
         return new GoalState(filled, remaining, capped);
     }
 
+    // 지시(yml) 뒤에 남은 목표를 "key: 이름. 기준" 한 줄씩. 대화는 라벨 없이 역할 그대로 실린다.
     private List<ChatMessage> buildPrompt(List<ChatGoalProperties.Goal> remaining, List<Message> transcript) {
         StringBuilder system = new StringBuilder(goalProperties.getJudge().strip());
-        system.append("\n\n[아직 안 채워진 목표 — key: 이름. 채워진 것으로 보는 기준]");
         for (ChatGoalProperties.Goal goal : remaining) {
-            system.append("\n- ").append(goal.getKey()).append(": ").append(goal.getName());
+            system.append("\n").append(goal.getKey()).append(": ").append(goal.getName());
             if (goal.getFilledWhen() != null && !goal.getFilledWhen().isBlank()) {
                 system.append(". ").append(goal.getFilledWhen().strip());
             }
         }
-        StringBuilder user = new StringBuilder("[대화 — 시간순. (사연자)가 유저, (상담자)가 우리 쪽이다]");
+        List<ChatMessage> prompt = new ArrayList<>();
+        prompt.add(ChatMessage.system(system.toString()));
         for (Message message : transcript) {
-            user.append("\n\n").append(message.getRole() == MessageRole.USER ? "(사연자) " : "(상담자) ")
-                    .append(message.getContent());
+            prompt.add(message.getRole() == MessageRole.USER
+                    ? ChatMessage.user(message.getContent())
+                    : ChatMessage.assistant(message.getContent()));
         }
-        return List.of(ChatMessage.system(system.toString()), ChatMessage.user(user.toString()));
+        return prompt;
     }
 
     // 응답에서 남은 목표에 해당하고 근거가 있는 것만 저장한다. 근거 없는 채워짐은 받지 않는다 —
@@ -157,6 +159,8 @@ public class GoalJudge {
                 log.warn("목표 저장 실패 storyId={} key={}", storyId, key, e);
             }
         }
+        log.info("목표 판정 storyId={} 남은 {}개 중 새로 채움 {}", storyId, remaining.size(),
+                added.stream().map(StoryGoal::getGoalKey).toList());
         return added;
     }
 
