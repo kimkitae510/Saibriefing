@@ -42,6 +42,14 @@ class ReplyLinterTest {
     }
 
     @Test
+    @DisplayName("메모 칸 - 본문만 보고, [답] 마커가 없는 턴은 형식 미준수로 센다")
+    void inspectsVisibleAnswerOnly() {
+        // 메모에 판세 어휘가 있어도 본문이 깨끗하면 규칙 위반이 아니다
+        assertThat(linter.hits("[생각]\n판을 읽는다\n[답]\n그때 뭐라고 했어요?")).isEmpty();
+        assertThat(linter.hits("그때 뭐라고 했어요?")).containsOnlyKeys("생각칸없음");
+    }
+
+    @Test
     @DisplayName("정상 답변은 아무것도 걸리지 않는다(존댓말, 마침표 포함)")
     void cleanReplyPasses() {
         assertThat(linter.violatedRules(

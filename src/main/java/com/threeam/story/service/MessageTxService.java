@@ -7,6 +7,7 @@ import com.threeam.llm.ChatMessage;
 import com.threeam.llm.ChatPersonaProperties;
 import com.threeam.story.dto.MessageResponse;
 import com.threeam.story.entity.ChatMeta;
+import com.threeam.story.entity.ReplyThought;
 import com.threeam.story.entity.FactSource;
 import com.threeam.story.entity.Message;
 import com.threeam.story.entity.MessageRole;
@@ -146,7 +147,9 @@ public class MessageTxService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
         // 옛 판의 내부 블록이 흘러나오면 읽어서 옮기고 본문에서는 뗀다(ChatMeta 주석).
         story.updateReunionDirection(ChatMeta.direction(reply));
-        Message answer = Message.assistant(story, stripMarkdown(ChatMeta.strip(reply)));
+        // 답 앞의 메모는 따로 떼어 둔다 — 화면에는 [답] 뒤만 나간다(ReplyThought 주석).
+        ReplyThought.Split split = ReplyThought.split(ChatMeta.strip(reply));
+        Message answer = Message.assistant(story, stripMarkdown(split.answer()), split.thought());
         messageRepository.save(answer);
         story.touch();
         return MessageResponse.from(answer);

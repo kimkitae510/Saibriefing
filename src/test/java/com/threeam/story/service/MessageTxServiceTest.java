@@ -29,6 +29,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -305,6 +306,44 @@ class MessageTxServiceTest {
                 .isEqualTo("상대는 아직 관계를 다시 잇겠다는 행동을 하지 않고 있습니다.")
                 .doesNotContain("reunionDirection");
         assertThat(story.getReunionDirection()).isEqualTo(ReunionDirection.NEGATIVE);
+    }
+
+    // 답 앞의 메모 칸(ReplyThought). 화면에는 [답] 뒤만 나가고 메모는 따로 남는다.
+    @Test
+    @DisplayName("어시스턴트 응답 저장 - [생각]은 메모로 떼고 [답] 뒤만 본문으로 저장한다")
+    void appendAssistant_splitsThoughtFromAnswer() {
+        Story story = story(10L);
+        given(storyRepository.findById(10L)).willReturn(Optional.of(story));
+        given(messageRepository.save(any(Message.class))).willAnswer(inv -> inv.getArgument(0));
+
+        MessageResponse response = messageTxService.appendAssistantReply(10L,
+                "[생각]\n읽어줄 것: 술자리보다 타이밍이 걸렸다.\n아직 모르는 것: 시간 갖자고 한 이유.\n"
+                        + "물을 장면: 그때 한 말.\n[답]\n술 마신 것 자체보다 그 타이밍이 더 걸리셨던 거 아니에요?\n\n"
+                        + "시간 갖자고 할 때 여자친구가 뭐라고 했어요?");
+
+        assertThat(response.getContent())
+                .isEqualTo("술 마신 것 자체보다 그 타이밍이 더 걸리셨던 거 아니에요?\n\n시간 갖자고 할 때 여자친구가 뭐라고 했어요?")
+                .doesNotContain("[생각]").doesNotContain("[답]").doesNotContain("읽어줄 것");
+        ArgumentCaptor<Message> saved = ArgumentCaptor.forClass(Message.class);
+        verify(messageRepository).save(saved.capture());
+        assertThat(saved.getValue().getThought())
+                .startsWith("읽어줄 것: 술자리보다 타이밍이 걸렸다.")
+                .endsWith("물을 장면: 그때 한 말.");
+    }
+
+    @Test
+    @DisplayName("어시스턴트 응답 저장 - [답] 마커가 없으면 전부 본문이고 메모는 없다(형식을 안 지킨 턴이 빈 말풍선이 되지 않게)")
+    void appendAssistant_withoutAnswerMarkerKeepsWholeReply() {
+        Story story = story(10L);
+        given(storyRepository.findById(10L)).willReturn(Optional.of(story));
+        given(messageRepository.save(any(Message.class))).willAnswer(inv -> inv.getArgument(0));
+
+        MessageResponse response = messageTxService.appendAssistantReply(10L, "그 말을 들었을 때 어땠어요?");
+
+        assertThat(response.getContent()).isEqualTo("그 말을 들었을 때 어땠어요?");
+        ArgumentCaptor<Message> saved = ArgumentCaptor.forClass(Message.class);
+        verify(messageRepository).save(saved.capture());
+        assertThat(saved.getValue().getThought()).isNull();
     }
 
     // 옛 판이 남긴 질문 구분선. 기록은 고치지 않으므로 표시에서 걷어 질문을 본문 줄로 잇는다.

@@ -1,5 +1,7 @@
 package com.threeam.story.service;
 
+import com.threeam.story.entity.ChatMeta;
+import com.threeam.story.entity.ReplyThought;
 import io.micrometer.core.instrument.Metrics;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -42,12 +44,7 @@ public class ReplyLinter {
         if (reply == null || reply.isBlank()) {
             return;
         }
-        Map<String, Integer> hits = new LinkedHashMap<>();
-        count(hits, "판세어휘", BOARD_WORDS, reply);
-        count(hits, "불릿", BULLET, reply);
-        count(hits, "마크다운", MARKDOWN, reply);
-        count(hits, "양자택일형태", EITHER_OR, reply);
-
+        Map<String, Integer> hits = hits(reply);
         if (hits.isEmpty()) {
             Metrics.counter("chat.reply.clean").increment();
             return;
@@ -55,6 +52,22 @@ public class ReplyLinter {
         // 답변 원문은 사연이라 개인정보다 — 무엇이 몇 번인지만 남기고 문장은 남기지 않는다.
         log.warn("답변 규칙 위반 storyId={} {}", storyId, hits);
         hits.forEach((rule, n) -> Metrics.counter("chat.reply.violation", "rule", rule).increment(n));
+    }
+
+    // 규칙 이름과 횟수. 유저에게 나가는 본문만 본다 — 메모 칸(ReplyThought)은 화면에 안 나가고 형식도 다르다.
+    Map<String, Integer> hits(String reply) {
+        String visible = ReplyThought.split(ChatMeta.strip(reply)).answer();
+        Map<String, Integer> hits = new LinkedHashMap<>();
+        count(hits, "판세어휘", BOARD_WORDS, visible);
+        count(hits, "불릿", BULLET, visible);
+        count(hits, "마크다운", MARKDOWN, visible);
+        count(hits, "양자택일형태", EITHER_OR, visible);
+        // 메모 칸 형식을 안 지킨 턴. 위의 규칙들과 반대로 '없으면' 위반이지만, 프롬프트가 요구하는
+        // 형식을 모델이 얼마나 따르는지는 여기 아니면 아무도 안 센다.
+        if (!ReplyThought.hasAnswerMarker(reply)) {
+            hits.put("생각칸없음", 1);
+        }
+        return hits;
     }
 
     private void count(Map<String, Integer> hits, String name, Pattern pattern, String reply) {

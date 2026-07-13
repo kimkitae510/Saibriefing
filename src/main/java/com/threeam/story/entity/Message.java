@@ -47,15 +47,21 @@ public class Message {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
+    // 상담자가 답하기 전에 적은 메모(ReplyThought). 화면과 다음 턴 프롬프트에는 안 나간다 —
+    // 답이 이상할 때 읽기가 틀렸는지 말이 틀렸는지를 가르는 용도로만 남긴다.
+    @Column(columnDefinition = "TEXT")
+    private String thought;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @Builder
-    private Message(Story story, MessageRole role, String content) {
+    private Message(Story story, MessageRole role, String content, String thought) {
         this.story = story;
         this.role = role;
         this.content = content;
+        this.thought = thought;
     }
 
     public static Message user(Story story, String content) {
@@ -63,7 +69,12 @@ public class Message {
     }
 
     public static Message assistant(Story story, String content) {
-        return Message.builder().story(story).role(MessageRole.ASSISTANT).content(content).build();
+        return assistant(story, content, null);
+    }
+
+    public static Message assistant(Story story, String content, String thought) {
+        return Message.builder().story(story).role(MessageRole.ASSISTANT).content(content)
+                .thought(thought).build();
     }
 
     // LLM 호출이 실패했을 때 답 대신 저장하는 말풍선. 폴링이 이걸 받고 정상 종료한다.
