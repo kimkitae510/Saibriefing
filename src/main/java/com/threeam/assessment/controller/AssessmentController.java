@@ -1,11 +1,12 @@
 package com.threeam.assessment.controller;
 
+import com.threeam.assessment.dto.AssessmentJobResponse;
 import com.threeam.assessment.dto.AssessmentResponse;
+import com.threeam.assessment.entity.AssessmentJob;
+import com.threeam.assessment.service.AssessmentJobService;
 import com.threeam.assessment.service.AssessmentService;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,14 +21,21 @@ import org.springframework.web.bind.annotation.RestController;
 public class AssessmentController {
 
     private final AssessmentService assessmentService;
+    private final AssessmentJobService jobService;
 
-    // 사연의 대화를 읽어 분석한다. LLM 호출이 끼므로 논블로킹으로 반환한다.
+    // 분석 작업을 접수한다(202). 결과는 작업 폴링으로 — 두 LLM 호출이 분 단위라 연결을 붙들지 않는다.
+    // 이미 도는 작업이 있으면 그 작업을, 사전 가드에서 끝나면 jobId 없이 안내(result)를 돌려준다.
     @PostMapping
-    public CompletableFuture<ResponseEntity<AssessmentResponse>> assess(
-            @AuthenticationPrincipal Long userId,
-            @PathVariable Long storyId) {
-        return assessmentService.assess(userId, storyId)
-                .thenApply(response -> ResponseEntity.status(HttpStatus.CREATED).body(response));
+    public ResponseEntity<AssessmentJobResponse> assess(@AuthenticationPrincipal Long userId,
+                                                        @PathVariable Long storyId) {
+        return ResponseEntity.accepted().body(jobService.start(userId, storyId));
+    }
+
+    @GetMapping("/jobs/{jobId}")
+    public ResponseEntity<AssessmentJobResponse> job(@AuthenticationPrincipal Long userId,
+                                                     @PathVariable Long storyId,
+                                                     @PathVariable Long jobId) {
+        return ResponseEntity.ok(jobService.get(userId, storyId, jobId));
     }
 
     @GetMapping
@@ -36,14 +44,18 @@ public class AssessmentController {
         return ResponseEntity.ok(assessmentService.getHistory(userId, storyId));
     }
 
-    // 분석이 도는 동안 화면이 폴링한다 — 어느 단계(판정/판독)인지. 진행 중이 아니면 stage=null.
+    // 진행 중인 작업이 있는지 — 화면이 재진입 때 붙을 작업을 찾는 데 쓴다. 없으면 stage=null.
     @GetMapping("/progress")
     public ResponseEntity<ProgressResponse> progress(@AuthenticationPrincipal Long userId,
                                                      @PathVariable Long storyId) {
-        return ResponseEntity.ok(new ProgressResponse(assessmentService.progressStage(userId, storyId)));
+        return ResponseEntity.ok(jobService.progress(userId, storyId)
+                .map(job -> new ProgressResponse("READING", job.jobId(), job.analysisStatus(),
+                        job.judgementStatus()))
+                .orElseGet(() -> new ProgressResponse(null, null, null, null)));
     }
 
-    public record ProgressResponse(String stage) {
+    public record ProgressResponse(String stage, Long jobId, AssessmentJob.StepStatus analysisStatus,
+                                   AssessmentJob.StepStatus judgementStatus) {
     }
 
     // "만나는 중" 잠금을 유저가 직접 번복한다(분석이 오해했을 수 있다). 오판이던 잠금 판정을

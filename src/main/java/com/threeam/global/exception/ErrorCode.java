@@ -67,6 +67,7 @@ public enum ErrorCode {
     ASSESSMENT_NOT_LOCKED(HttpStatus.CONFLICT, "AS004", "지금은 재회 성공으로 분석된 상태가 아닙니다."),
     ASSESSMENT_NOT_OFFER(HttpStatus.CONFLICT, "AS005", "지금은 상대의 재회 제안으로 확정된 상태가 아닙니다."),
     ASSESSMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "AS006", "분석을 찾을 수 없습니다."),
+    ASSESSMENT_JOB_NOT_FOUND(HttpStatus.NOT_FOUND, "AS007", "분석 작업을 찾을 수 없습니다."),
 
     // 분석 공유
     SHARE_NOT_FOUND(HttpStatus.NOT_FOUND, "SH001", "공유된 분석을 찾을 수 없습니다. 링크가 잘못되었거나 삭제된 이야기입니다."),
