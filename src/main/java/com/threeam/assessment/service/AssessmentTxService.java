@@ -156,9 +156,9 @@ public class AssessmentTxService {
 
         // 대화 전체를 시간순으로, 양쪽 역할 다. 창(window)을 두지 않는다 — 대화는 시간 상한으로 짧다.
         // 상담자 발화도 싣는다: 탐색 채팅의 유저 답은 "응", "그때 한 번"처럼 짧아서 상담자의 질문이
-        // 없으면 무엇에 대한 답인지가 사라진다(실측 592). 상담자는 탐색 판에서 해석과 처방을 하지
-        // 않으므로 옛 판의 오염(해석 문장을 요인 근거로 옮겨 적음, 골든셋 12)은 프롬프트가 막는다 —
-        // 그래도 역할을 (상담자)/(사연자)로 표시해 판독이 누구 말인지 가려 읽게 한다.
+        // 없으면 무엇에 대한 답인지가 사라진다(실측 592). 상담자는 장면 하나가 무엇을 뜻하는지까지는
+        // 의견을 내므로(2026-09-23부터) 그 해석이 사연으로 둔갑하지 않게 reading.yml이 "상담자의
+        // 해석은 근거가 아니다"로 받는다. 역할을 (상담자)/(사연자)로 표시해 판독이 누구 말인지 가려 읽게 한다.
         // 각 발화 앞에 작성일을 박는다 — 사연 속 "일주일째 연락 없다" 같은 상대 시간 표현은
         // 그 말을 한 날 기준이라, 날짜 없이 주입하면 판독이 몇 달 전 상태를 지금으로 읽는다(실측 619:
         // 7개월 경과를 못 읽음). 오늘 날짜(todayLine)와 짝이 되어야 경과 계산이 성립한다.
@@ -202,12 +202,22 @@ public class AssessmentTxService {
     }
 
     // 루브릭 시간 규칙(5주/3개월, 소진형 1개월)의 기준점. 원장 기록일 추정에 맡기지 않고 명시한다.
-    // 개발 플래그(today-from-story)면 사연 작성일 — 옛 사연 재실행에서 날짜 차이가 글에 새는 것을 막는다.
+    // 개발 플래그(today-from-story)면 마지막 발화일 — 옛 사연 재실행에서 날짜 차이가 글에 새는 것을 막는다.
+    // 사연 작성일로 잡으면 그 뒤에 온 발화(8/24)가 "오늘" 뒤 날짜가 되어 판독이 시간 모순을 본문에 쓴다(실측 594).
     private String todayLine(Story story) {
         LocalDate today = LocalDate.now();
-        if (readingProperties != null && readingProperties.isTodayFromStory()
-                && story.getCreatedAt() != null) {
-            today = story.getCreatedAt().toLocalDate();
+        if (readingProperties != null && readingProperties.isTodayFromStory()) {
+            LocalDate last = messageRepository
+                    .findByStoryIdOrderByIdDesc(story.getId(), PageRequest.of(0, 1))
+                    .getContent().stream()
+                    .map(Message::getCreatedAt)
+                    .filter(java.util.Objects::nonNull)
+                    .map(java.time.LocalDateTime::toLocalDate)
+                    .findFirst()
+                    .orElse(story.getCreatedAt() == null ? null : story.getCreatedAt().toLocalDate());
+            if (last != null) {
+                today = last;
+            }
         }
         return "오늘 날짜: " + today + ". 이별 경과 등 시간 계산은 이 날짜 기준이다.";
     }
