@@ -42,13 +42,6 @@ public class StoryIntake {
     @Column(nullable = false, unique = true)
     private Long storyId;
 
-    // 상담자가 유저를 부르는 이름. 실명일 필요는 없다(가명, 별명 가능). 신원 확인이 아니라
-    // 부르려고 받는 값이라 수집 최소화와 안 부딪힌다.
-    // 다른 칸과 같이 비워둘 수 있다 — 문진은 전부 건너뛸 수 있는 화면이라 이것만 필수로 걸면
-    // 이름을 안 적은 사람의 나머지 답이 통째로 버려진다. 없으면 상담자는 이름 없이 부른다.
-    @Column(length = 8)
-    private String callName;
-
     private Integer userAge;
 
     private Integer partnerAge;
@@ -62,7 +55,25 @@ public class StoryIntake {
 
     // 개월이 아니라 일 단위로 받는다. 폼의 "1주 안"은 개월로 접으면 0이라 사라지는데,
     // 이별 3일째와 25일째는 상대 행동의 의미가 전혀 다르다. 프로필의 개월은 여기서 나눠 만든다.
+    // 시간을 갖는 중이면 시간을 갖기 시작한 뒤의 경과다(같은 칸을 쓴다 — 화면의 질문만 바뀐다).
     private Integer daysSinceBreakup;
+
+    // 헤어진 건지 시간을 갖는 건지. 이 칸이 없으면 상담자가 첫 턴에 기간과 연락 규칙을 되묻는다(실측).
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private RelationState relationState;
+
+    // 아래 둘은 시간을 갖는 중일 때만 묻는 가지다.
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private PausePlan pausePlan;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
+    private PauseContactRule pauseContactRule;
 
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.VARCHAR)
@@ -114,6 +125,11 @@ public class StoryIntake {
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.VARCHAR)
     @Column(length = 20)
+    private PriorReunionGap priorReunionGap;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 20)
     private LastActionBeforeCut lastActionBeforeCut;
 
     @Enumerated(EnumType.STRING)
@@ -143,49 +159,47 @@ public class StoryIntake {
     private LocalDateTime createdAt;
 
     @Builder
-    private StoryIntake(Long storyId, String callName, Integer userAge, Integer partnerAge,
+    private StoryIntake(Long storyId, Integer userAge, Integer partnerAge,
                         IntakeGender userGender,
                         Integer datingMonths, Integer daysSinceBreakup, BreakupInitiator initiator,
                         ContactMode contactMode, PriorReunion priorReunion,
                         PartnerNewRelation partnerHasNew, PreBreakupChange preBreakupChange,
                         Branches branches,
                         List<PartnerAction> partnerActions, List<ContactPoint> contactPoints,
-                        Map<String, String> otherAnswers) {
+                        Map<String, String> otherAnswers, RelationState relationState) {
         this.storyId = storyId;
-        apply(callName, userAge, partnerAge, userGender, datingMonths, daysSinceBreakup, initiator,
+        apply(userAge, partnerAge, userGender, datingMonths, daysSinceBreakup, initiator,
                 contactMode, priorReunion, partnerHasNew, preBreakupChange, branches, partnerActions,
-                contactPoints, otherAnswers);
+                contactPoints, otherAnswers, relationState);
     }
 
     // 유저가 폼을 다시 열어 고칠 수 있게 통째로 갈아끼운다. 부분 수정을 받지 않는 이유는
     // 건너뛴 칸(null)과 지운 칸을 구분할 수 없어서다 — 화면이 늘 전체를 보낸다.
-    public void update(String callName, Integer userAge, Integer partnerAge, IntakeGender userGender,
+    public void update(Integer userAge, Integer partnerAge, IntakeGender userGender,
                        Integer datingMonths, Integer daysSinceBreakup, BreakupInitiator initiator,
                        ContactMode contactMode, PriorReunion priorReunion,
                        PartnerNewRelation partnerHasNew, PreBreakupChange preBreakupChange,
                        Branches branches,
                        List<PartnerAction> partnerActions, List<ContactPoint> contactPoints,
-                       Map<String, String> otherAnswers) {
-        apply(callName, userAge, partnerAge, userGender, datingMonths, daysSinceBreakup, initiator,
+                       Map<String, String> otherAnswers, RelationState relationState) {
+        apply(userAge, partnerAge, userGender, datingMonths, daysSinceBreakup, initiator,
                 contactMode, priorReunion, partnerHasNew, preBreakupChange, branches, partnerActions,
-                contactPoints, otherAnswers);
+                contactPoints, otherAnswers, relationState);
     }
 
-    private void apply(String callName, Integer userAge, Integer partnerAge, IntakeGender userGender,
+    private void apply(Integer userAge, Integer partnerAge, IntakeGender userGender,
                        Integer datingMonths, Integer daysSinceBreakup, BreakupInitiator initiator,
                        ContactMode contactMode, PriorReunion priorReunion,
                        PartnerNewRelation partnerHasNew, PreBreakupChange preBreakupChange,
                        Branches branches,
                        List<PartnerAction> partnerActions, List<ContactPoint> contactPoints,
-                       Map<String, String> otherAnswers) {
-        // 앞뒤 공백은 여기서 한 번만 턴다 — 호칭은 말풍선에 그대로 박히는 값이라
-        // " 지호 "가 저장되면 "지호 님은"처럼 벌어진다.
-        this.callName = callName == null || callName.isBlank() ? null : callName.trim();
+                       Map<String, String> otherAnswers, RelationState relationState) {
         this.userAge = userAge;
         this.partnerAge = partnerAge;
         this.userGender = userGender;
         this.datingMonths = datingMonths;
         this.daysSinceBreakup = daysSinceBreakup;
+        this.relationState = relationState;
         this.initiator = initiator;
         this.contactMode = contactMode;
         this.priorReunion = priorReunion;
@@ -196,9 +210,12 @@ public class StoryIntake {
         this.repeatBreakupPattern = b.repeatBreakupPattern();
         this.repeatSeverity = b.repeatSeverity();
         this.priorReunionPath = b.priorReunionPath();
+        this.priorReunionGap = b.priorReunionGap();
         this.lastActionBeforeCut = b.lastActionBeforeCut();
         this.selfEndReason = b.selfEndReason();
         this.newRelationOverlap = b.newRelationOverlap();
+        this.pausePlan = b.pausePlan();
+        this.pauseContactRule = b.pauseContactRule();
         this.partnerActions = join(partnerActions);
         this.contactPoints = join(contactPoints);
         this.otherAnswers = joinOthers(otherAnswers);
@@ -236,9 +253,12 @@ public class StoryIntake {
     // 나란히 받으면 enum 자리를 바꿔 끼워도 컴파일이 통과한다.
     public record Branches(ClingReaction clingReaction, RepeatBreakupPattern repeatBreakupPattern,
                            RepeatSeverity repeatSeverity, PriorReunionPath priorReunionPath,
+                           PriorReunionGap priorReunionGap,
                            LastActionBeforeCut lastActionBeforeCut, SelfEndReason selfEndReason,
-                           NewRelationOverlap newRelationOverlap) {
-        public static final Branches NONE = new Branches(null, null, null, null, null, null, null);
+                           NewRelationOverlap newRelationOverlap,
+                           PausePlan pausePlan, PauseContactRule pauseContactRule) {
+        public static final Branches NONE =
+                new Branches(null, null, null, null, null, null, null, null, null, null);
     }
 
     public List<PartnerAction> partnerActionList() {

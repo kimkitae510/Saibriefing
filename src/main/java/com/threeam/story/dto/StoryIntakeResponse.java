@@ -9,8 +9,12 @@ import com.threeam.story.entity.LastActionBeforeCut;
 import com.threeam.story.entity.NewRelationOverlap;
 import com.threeam.story.entity.PartnerAction;
 import com.threeam.story.entity.PartnerNewRelation;
+import com.threeam.story.entity.PauseContactRule;
+import com.threeam.story.entity.PausePlan;
 import com.threeam.story.entity.PreBreakupChange;
+import com.threeam.story.entity.RelationState;
 import com.threeam.story.entity.PriorReunion;
+import com.threeam.story.entity.PriorReunionGap;
 import com.threeam.story.entity.PriorReunionPath;
 import com.threeam.story.entity.RepeatBreakupPattern;
 import com.threeam.story.entity.RepeatSeverity;
@@ -25,7 +29,6 @@ import java.util.Map;
 // submitted=false여도 나머지 칸은 채워 보낸다(직전 사연에서 물려받은 미리 채움).
 public record StoryIntakeResponse(
         boolean submitted,
-        String callName,
         Integer userAge,
         Integer partnerAge,
         IntakeGender userGender,
@@ -40,36 +43,38 @@ public record StoryIntakeResponse(
         RepeatBreakupPattern repeatBreakupPattern,
         RepeatSeverity repeatSeverity,
         PriorReunionPath priorReunionPath,
+        PriorReunionGap priorReunionGap,
         LastActionBeforeCut lastActionBeforeCut,
         SelfEndReason selfEndReason,
         NewRelationOverlap newRelationOverlap,
         List<PartnerAction> partnerActions,
         List<ContactPoint> contactPoints,
-        Map<String, String> otherAnswers) {
+        Map<String, String> otherAnswers,
+        RelationState relationState,
+        PausePlan pausePlan,
+        PauseContactRule pauseContactRule) {
 
     public static StoryIntakeResponse of(StoryIntake intake) {
-        return new StoryIntakeResponse(true, intake.getCallName(),
+        return new StoryIntakeResponse(true,
                 intake.getUserAge(), intake.getPartnerAge(),
                 intake.getUserGender(), intake.getDatingMonths(), intake.getDaysSinceBreakup(),
                 intake.getInitiator(), intake.getContactMode(), intake.getPriorReunion(),
                 intake.getPartnerHasNew(), intake.getPreBreakupChange(),
                 intake.getClingReaction(), intake.getRepeatBreakupPattern(),
                 intake.getRepeatSeverity(), intake.getPriorReunionPath(),
-                intake.getLastActionBeforeCut(),
+                intake.getPriorReunionGap(), intake.getLastActionBeforeCut(),
                 intake.getSelfEndReason(), intake.getNewRelationOverlap(),
-                intake.partnerActionList(), intake.contactPointList(), intake.otherAnswerMap());
+                intake.partnerActionList(), intake.contactPointList(), intake.otherAnswerMap(),
+                intake.getRelationState(), intake.getPausePlan(), intake.getPauseContactRule());
     }
 
     // 아직 안 낸 사연. 상대에 관한 값은 물려받지 않는다 — 사연이 다르면 상대가 다른 사람이다.
-    // 부를 이름, 나이, 성별만 이어받는다(사연이 달라도 유저는 같은 사람이다).
-    // 이름은 null 대신 빈 문자열로 내려보낸다 — 화면이 입력칸에 바로 꽂는 값이라
-    // null이 섞이면 폼이 "값 없음"과 "안 물려받음"을 따로 다뤄야 한다.
-    public static StoryIntakeResponse prefilled(String callName, Integer userAge,
-                                                IntakeGender userGender) {
-        return new StoryIntakeResponse(false, callName == null ? "" : callName,
+    // 나이, 성별만 이어받는다(사연이 달라도 유저는 같은 사람이다).
+    public static StoryIntakeResponse prefilled(Integer userAge, IntakeGender userGender) {
+        return new StoryIntakeResponse(false,
                 userAge, null, userGender, null, null,
-                null, null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null,
                 List.of(), List.of(),
-                Map.of());
+                Map.of(), null, null, null);
     }
 }

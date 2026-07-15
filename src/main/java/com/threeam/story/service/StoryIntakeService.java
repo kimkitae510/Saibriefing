@@ -6,6 +6,8 @@ import com.threeam.story.dto.StoryIntakeRequest;
 import com.threeam.story.dto.StoryIntakeResponse;
 import com.threeam.story.entity.ContactPoint;
 import com.threeam.story.entity.PartnerAction;
+import com.threeam.story.entity.PriorReunionGap;
+import com.threeam.story.entity.RelationState;
 import com.threeam.story.entity.Story;
 import com.threeam.story.entity.StoryIntake;
 import com.threeam.story.repository.StoryIntakeRepository;
@@ -31,15 +33,12 @@ public class StoryIntakeService {
     private final StoryIntakeRepository intakeRepository;
     private final StoryRepository storyRepository;
 
-    // 이름 칸을 건너뛴 사람을 부르는 말. 이름이 없다고 줄을 빼면 상담자가 대조 문장에서
-    // 주어를 통째로 빠뜨리므로, 빈칸 대신 이 호칭을 싣는다.
-    static final String DEFAULT_CALL_NAME = "내담자";
-
     // "기타" 직접 입력을 받는 칸. 화면의 칸 이름과 같다. 모르는 키는 버린다.
     static final Set<String> OTHER_FIELDS = Set.of("priorReunion", "repeatBreakupPattern",
-            "repeatSeverity", "priorReunionPath",
+            "repeatSeverity", "priorReunionPath", "priorReunionGap",
             "initiator", "selfEndReason", "contactMode", "lastActionBeforeCut", "clingReaction",
-            "preBreakupChange", "partnerHasNew", "newRelationOverlap", "partnerActions");
+            "preBreakupChange", "partnerHasNew", "newRelationOverlap", "partnerActions",
+            "relationState", "pausePlan", "pauseContactRule");
     static final int OTHER_MAX_LENGTH = 200;
 
     @Transactional(readOnly = true)
@@ -57,7 +56,6 @@ public class StoryIntakeService {
         if (intake == null) {
             intake = intakeRepository.save(StoryIntake.builder()
                     .storyId(storyId)
-                    .callName(request.callName())
                     .userAge(request.userAge())
                     .partnerAge(request.partnerAge())
                     .userGender(request.userGender())
@@ -72,16 +70,16 @@ public class StoryIntakeService {
                     .partnerActions(exclusiveActions(request.partnerActions()))
                     .contactPoints(exclusive(request.contactPoints(), ContactPoint.NONE))
                     .otherAnswers(sanitizeOthers(request.otherAnswers()))
+                    .relationState(request.relationState())
                     .build());
         } else {
-            intake.update(request.callName(),
-                    request.userAge(), request.partnerAge(), request.userGender(),
+            intake.update(request.userAge(), request.partnerAge(), request.userGender(),
                     request.datingMonths(), request.daysSinceBreakup(), request.initiator(),
                     request.contactMode(), request.priorReunion(), request.partnerHasNew(),
                     request.preBreakupChange(), request.branches(),
                     exclusiveActions(request.partnerActions()),
                     exclusive(request.contactPoints(), ContactPoint.NONE),
-                    sanitizeOthers(request.otherAnswers()));
+                    sanitizeOthers(request.otherAnswers()), request.relationState());
         }
         return StoryIntakeResponse.of(intake);
     }
@@ -103,10 +101,24 @@ public class StoryIntakeService {
                 intake.getUserGender() == null ? null : intake.getUserGender().caseVocabulary()));
         line(block, "상대", person(intake.getPartnerAge(), null));
         line(block, "교제 기간", duration(intake.getDatingMonths()));
+        // 시간을 갖는 중이면 같은 칸이 다른 질문의 답이다(경과, 먼저 원한 쪽, 붙잡음, 상대 행동).
+        // 화면이 물은 대로 이름을 붙여야 모델이 "이별 후"를 없는 이별로 읽지 않는다.
+        boolean onBreak = intake.getRelationState() == RelationState.ON_BREAK;
+        line(block, "관계 상태", choice(intake.getRelationState(),
+                intake.getRelationState() == null ? null : intake.getRelationState().label(),
+                others, "relationState"));
         // 입력값은 첫 입력 시점의 것이라 그대로 실으면 두 달 뒤에도 "12일 전"이다.
         // 경과일은 그때 이후 흐른 날을 더해 현재 시점으로 보정한다.
-        line(block, "이별 후 경과", elapsedSinceBreakup(intake));
-        line(block, "먼저 이별을 원한 쪽", choice(intake.getInitiator(),
+        line(block, onBreak ? "시간을 갖기 시작한 뒤 경과"
+                : intake.getRelationState() == RelationState.UNCLEAR ? "관계가 이렇게 된 뒤 경과"
+                : "이별 후 경과", elapsedSinceBreakup(intake));
+        line(block, "시간을 갖기로 정한 기간", choice(intake.getPausePlan(),
+                intake.getPausePlan() == null ? null : intake.getPausePlan().label(),
+                others, "pausePlan"));
+        line(block, "시간을 갖는 동안 연락 규칙", choice(intake.getPauseContactRule(),
+                intake.getPauseContactRule() == null ? null : intake.getPauseContactRule().label(),
+                others, "pauseContactRule"));
+        line(block, onBreak ? "먼저 시간을 갖자고 한 쪽" : "먼저 이별을 원한 쪽", choice(intake.getInitiator(),
                 intake.getInitiator() == null ? null : intake.getInitiator().label(), others, "initiator"));
         line(block, "이 상대와 재회 경험", choice(intake.getPriorReunion(),
                 intake.getPriorReunion() == null ? null : intake.getPriorReunion().label(),
@@ -120,13 +132,21 @@ public class StoryIntakeService {
         line(block, "지난번에 다시 만나게 된 경로", choice(intake.getPriorReunionPath(),
                 intake.getPriorReunionPath() == null ? null : intake.getPriorReunionPath().label(),
                 others, "priorReunionPath"));
+        line(block, "지난번 재회까지 걸린 기간", choice(intake.getPriorReunionGap(),
+                intake.getPriorReunionGap() == null ? null : intake.getPriorReunionGap().label(),
+                others, "priorReunionGap"));
+        // 지금 경과가 지난번 구간의 상한을 넘었는지는 두 숫자의 비교라 코드가 한다.
+        // 모델에 맡기면 두 줄을 따로 읽고 지나간다. 판단이 아니라 사실 한 줄이다.
+        line(block, "지난번 재회 기간과 비교", gapComparison(intake));
         line(block, "이별 직전 관계 변화", choice(intake.getPreBreakupChange(),
                 intake.getPreBreakupChange() == null ? null : intake.getPreBreakupChange().label(),
                 others, "preBreakupChange"));
-        line(block, "유저가 먼저 헤어지자고 한 이유", choice(intake.getSelfEndReason(),
+        line(block, onBreak ? "유저가 먼저 시간을 갖자고 한 이유" : "유저가 먼저 헤어지자고 한 이유",
+                choice(intake.getSelfEndReason(),
                 intake.getSelfEndReason() == null ? null : intake.getSelfEndReason().label(),
                 others, "selfEndReason"));
-        line(block, "헤어진 뒤 유저가 붙잡았는지와 상대 반응", choice(intake.getClingReaction(),
+        line(block, onBreak ? "시간을 갖자고 한 뒤 유저가 붙잡았는지와 상대 반응"
+                : "헤어진 뒤 유저가 붙잡았는지와 상대 반응", choice(intake.getClingReaction(),
                 intake.getClingReaction() == null ? null : intake.getClingReaction().label(),
                 others, "clingReaction"));
         line(block, "차단이나 읽씹 직전 유저의 마지막 행동", choice(intake.getLastActionBeforeCut(),
@@ -145,20 +165,30 @@ public class StoryIntakeService {
         line(block, "상대의 새 사람이 생긴 시점", choice(intake.getNewRelationOverlap(),
                 intake.getNewRelationOverlap() == null ? null : intake.getNewRelationOverlap().label(),
                 others, "newRelationOverlap"));
-        line(block, "이별 후 상대가 먼저 한 행동(첫 입력 시점)",
+        line(block, onBreak ? "시간을 갖기 시작한 뒤 상대가 먼저 한 행동(첫 입력 시점)"
+                        : "이별 후 상대가 먼저 한 행동(첫 입력 시점)",
                 labels(intake.partnerActionList().stream()
                         .map(action -> action == PartnerAction.OTHER
                                 ? otherText(others, "partnerActions", action.label())
                                 : action.label())
                         .toList()));
-        // 다른 답이 하나도 없으면 블록을 안 만든다 — 호칭 한 줄만 실리면 "기본 정보"가 아니다.
         if (block.isEmpty()) {
             return null;
         }
-        StringBuilder head = new StringBuilder("유저가 직접 입력한 기본 정보:");
-        line(head, "유저를 부르는 이름",
-                intake.getCallName() == null ? DEFAULT_CALL_NAME : intake.getCallName());
-        return head.append(block).toString();
+        return "유저가 직접 입력한 기본 정보:" + block;
+    }
+
+    // 지금 경과가 지난번 재회까지 걸린 구간의 상한을 넘었으면 그 사실을. 안 넘었으면 아직
+    // 그 안이라는 것을. 상한이 없는 값(더 오래, 모름, 기타)이나 경과 미상이면 말하지 않는다.
+    static String gapComparison(StoryIntake intake) {
+        PriorReunionGap gap = intake.getPriorReunionGap();
+        Integer days = elapsedDays(intake);
+        if (gap == null || gap.maxDays() == null || days == null) {
+            return null;
+        }
+        return days > gap.maxDays()
+                ? "지금 경과가 지난번 재회까지 걸린 기간을 이미 넘었음"
+                : "지금 경과는 아직 지난번 재회까지 걸린 기간 안";
     }
 
     // 첫 입력 시점의 경과일에 그 뒤로 흐른 날을 더한다.
@@ -291,15 +321,15 @@ public class StoryIntakeService {
                 .filter(id -> !id.equals(storyId))
                 .toList();
         if (otherIds.isEmpty()) {
-            return StoryIntakeResponse.prefilled(null, null, null);
+            return StoryIntakeResponse.prefilled(null, null);
         }
         return intakeRepository.findByStoryIdInOrderByIdDesc(otherIds).stream()
                 .findFirst()
-                .map(previous -> StoryIntakeResponse.prefilled(previous.getCallName(),
+                .map(previous -> StoryIntakeResponse.prefilled(
                         // 나이는 지난번 입력 이후 흐른 해만큼 올려준다 — 재작년에 적은 26세를
                         // 그대로 채워두면 유저가 고치지 않는 한 틀린 나이가 프로필로 간다.
                         agedUp(previous), previous.getUserGender()))
-                .orElseGet(() -> StoryIntakeResponse.prefilled(null, null, null));
+                .orElseGet(() -> StoryIntakeResponse.prefilled(null, null));
     }
 
     static Integer agedUp(StoryIntake previous) {
