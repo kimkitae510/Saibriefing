@@ -134,9 +134,30 @@ public class ReadingLlm {
 
     public static final String EDIT_ASK = "이 글을 다듬어라.";
 
+    // 분석(A)과 재회 판독(B)을 병렬로 돌려 한 원석으로 조립한다. B는 judgement-guide가 있을 때만 —
+    // 없으면 A 하나로 옛 단일 호출 그대로. 작업(job) 경로는 두 호출을 따로 부르고 assemble만 쓴다.
     public CompletableFuture<DirectReading> readDirect(String intakeBlock,
                                                        String todayLine,
                                                        List<String> userMessages) {
+        CompletableFuture<String> analysis = analysisText(intakeBlock, todayLine, userMessages);
+        CompletableFuture<String> judgement = judgementOn()
+                ? judgementJson(intakeBlock, todayLine, userMessages)
+                : CompletableFuture.completedFuture(null);
+        return analysis.thenCombine(judgement, Halves::new)
+                .thenCompose(h -> assemble(h.analysis(), h.judgement(), intakeBlock, todayLine, userMessages));
+    }
+
+    private record Halves(String analysis, String judgement) {
+    }
+
+    public boolean judgementOn() {
+        String guide = readingProperties.getJudgementGuide();
+        return guide != null && !guide.isBlank();
+    }
+
+    // A — 분석 원석(표식 정리 전). 작업 경로가 이 텍스트를 그대로 저장한다.
+    public CompletableFuture<String> analysisText(String intakeBlock, String todayLine,
+                                                  List<String> userMessages) {
         String story = storyBlock(intakeBlock, todayLine, userMessages);
         List<ChatMessage> first = new ArrayList<>();
         String analysisSystem = readingProperties.getAnalysisGuide() != null
@@ -161,6 +182,183 @@ public class ReadingLlm {
         // 대목을 만드는 메아리(2026-09-14, 15 실측)라 헌법이 목적을 다 말하는 지금은 물음이 없어도 된다.
         first.add(ChatMessage.user(ask == null || ask.isBlank() ? story : ask + "\n\n" + story));
         dumpPacketQuietly(first);
+        return analysisCall(first);
+    }
+
+    // B — 재회 판독 JSON(이름, 카드, 총평, 등급). A와 같은 사연 묶음을 받고 헌법은 안 받는다 —
+    // 판독은 분석문을 재료로 쓰지 않고 자기 축으로 사연을 본다. 작업 경로가 이 JSON을 그대로 저장한다.
+    public CompletableFuture<String> judgementJson(String intakeBlock, String todayLine,
+                                                   List<String> userMessages) {
+        List<ChatMessage> prompt = new ArrayList<>();
+        prompt.add(ChatMessage.system(readingProperties.getJudgementGuide()));
+        prompt.add(ChatMessage.user(storyBlock(intakeBlock, todayLine, userMessages)));
+        return judgementCall(prompt).thenApply(json -> {
+            dumpJudgementRawQuietly(json);
+            return json;
+        });
+    }
+
+    private CompletableFuture<String> judgementCall(List<ChatMessage> prompt) {
+        // 지시가 JSON을 말하지 않으면 자유 산문 — 모델이 어떻게 쓰는지 보는 시험(2026-09-18, 사장님 "일단 이러지 말고
+        // 한번 보자"). 산문은 parseJudgement이 마지막 "판정 등급" 줄만 떼어 등급으로 읽고 나머지를 판정 글로 싣는다.
+        Map<String, Object> schema = judgementFreeText() ? null : JUDGEMENT_SCHEMA;
+        if ("openai".equalsIgnoreCase(readingProperties.getProvider())) {
+            return readingProperties.isJudgementWebSearch()
+                    ? openAiClient.generateReadingJsonWithSearch(prompt, schema, "판독+검색",
+                            readingProperties.getJudgementModel(),
+                            readingProperties.getJudgementWebSearchContext(),
+                            readingProperties.getJudgementWebSearchMaxCalls(),
+                            readingProperties.getJudgementReasoningEffort())
+                    : openAiClient.generateReadingJson(prompt, schema, "판독",
+                            readingProperties.getJudgementModel(),
+                            readingProperties.getJudgementReasoningEffort());
+        }
+        // mock은 스키마 동일성으로 이 호출을 가린다(유저 차례가 사연뿐이라 문구로는 못 가린다).
+        return llmClient.generateJsonDeep(prompt, JUDGEMENT_SCHEMA);
+    }
+
+    boolean judgementFreeText() {
+        String guide = readingProperties.getJudgementGuide();
+        return guide != null && !guide.contains("JSON");
+    }
+
+    // 자유 산문 B — 마지막 "판정 등급" 줄(또는 [가능성 등급])만 등급으로 읽고 나머지가 판정 글. 이름은 없다.
+    SolList parseJudgementProse(String raw) {
+        String t = raw.replace("\r\n", "\n").strip();
+        String grade = null;
+        StringBuilder body = new StringBuilder();
+        for (String line : t.split("\n")) {
+            String s = line.strip();
+            String probe = s.startsWith("판정 등급") ? GRADE_MARK + s.substring(5)
+                    : s.startsWith(GRADE_MARK) ? s
+                    : s.startsWith("재회 가능성 등급") ? GRADE_MARK + s.substring(8)
+                    : null;
+            if (probe != null) {
+                String g = gradeWord(probe.replace("**", ""));
+                if (g != null) {
+                    grade = g;
+                    continue;
+                }
+            }
+            body.append(line).append('\n');
+        }
+        // 산문 모드는 마크다운 강조가 그대로 온다 — 화면은 마크다운을 안 그리므로 여기서 걷는다.
+        String why = com.threeam.llm.OpenAiResponsesClient.stripCitations(body.toString())
+                .replace("**", "").replaceAll("(?m)^\\s*#+\\s*", "").strip().replaceAll("\n{3,}", "\n\n");
+        if (grade == null) {
+            log.warn("산문 판독에 등급 줄이 없음 — 폴백 MID로 조립됨");
+        }
+        return new SolList("", List.of(), List.of(), grade, null, why.isBlank() ? null : why, List.of(), null);
+    }
+
+    // B의 응답 문법 — judgement-guide의 필드 설명과 1:1.
+    public static final Map<String, Object> JUDGEMENT_SCHEMA = Map.ofEntries(
+            Map.entry("type", "OBJECT"),
+            // 카드(기준, 상태, 근거) + 총평. 102~104판은 text 한 칸(판정 글)과 산문이었고 파서는 셋 다 읽는다(2026-09-18).
+            Map.entry("properties", Map.of(
+                    "name", Map.of("type", "STRING"),
+                    "cards", Map.of("type", "ARRAY", "items", Map.ofEntries(
+                            Map.entry("type", "OBJECT"),
+                            Map.entry("properties", Map.of(
+                                    "criterion", Map.of("type", "STRING"),
+                                    "finding", Map.of("type", "STRING"),
+                                    "basis", Map.of("type", "STRING"))),
+                            Map.entry("required", List.of("criterion", "finding", "basis")),
+                            Map.entry("propertyOrdering", List.of("criterion", "finding", "basis")))),
+                    "summary", Map.of("type", "STRING"),
+                    "grade", Map.of("type", "STRING",
+                            "enum", List.of("매우 낮음", "낮음", "높음", "매우 높음")),
+                    "evidence", Map.of("type", "STRING"))),
+            Map.entry("required", List.of("name", "cards", "summary", "grade", "evidence")),
+            Map.entry("propertyOrdering", List.of("name", "cards", "summary", "grade", "evidence")));
+
+    // B JSON → sol 목록 자리. 카드는 direction대로 올리는 것/내리는 것("기준 — 근거")에 들어가고, 총평은 이유로,
+    // 등급은 sol의 네 말 그대로. direction이 없는 옛 응답은 유형 줄로 간다. 줄바꿈은 걷는다(정리표 파서가 줄 단위).
+    // 경계(boundary)는 더 안 받는다 — 한 칸 더는 아닌 이유는 반대 방향 카드가 말한다(2026-09-17, 사장님 "업다운으로").
+    SolList parseJudgement(String json) {
+        if (json != null && !json.strip().startsWith("{")) {
+            return parseJudgementProse(json);
+        }
+        try {
+            JsonNode root;
+            try {
+                root = objectMapper.readTree(LlmJson.salvage(json));
+            } catch (Exception first) {
+                // 옛 실패 잡에서 물려받은 B 텍스트는 인용 걷기가 배열 괄호를 먹은 채 저장돼 있다(2026-09-17).
+                // "cards":{ 로 시작하면 여는 대괄호만 되돌려 한 번 더 읽는다 — 새 응답은 이 길을 안 탄다.
+                String repaired = LlmJson.salvage(json).replaceFirst("\"cards\"\\s*:\\s*\\{", "\"cards\":[{");
+                root = objectMapper.readTree(repaired);
+                log.warn("판독 JSON을 배열 괄호 복구로 읽음(물려받은 텍스트)");
+            }
+            String name = oneLine(text(root, "name"));
+            String boundary = oneLine(text(root, "boundary"));
+            // evidence는 사연자에게 안 보이는 기록 — 검색이 판단을 실제로 바꿨는지 운영자가 로그로 확인한다(2026-09-17).
+            String evidence = text(root, "evidence").strip();
+            if (!evidence.isBlank()) {
+                log.info("판독 근거 기록:{}{}", System.lineSeparator(),
+                        com.threeam.llm.OpenAiResponsesClient.stripCitations(evidence));
+            }
+            String why = oneLine(text(root, "summary"));
+            if (why.isBlank()) {
+                // 판정 글은 문단을 살린다 — 정리표에는 "판정:" 아래 여러 줄로 실리고 파서가 그 줄들을 모은다.
+                why = com.threeam.llm.OpenAiResponsesClient.stripCitations(text(root, "text"))
+                        .replace("\r\n", "\n").strip().replaceAll("\n{3,}", "\n\n");
+            }
+            String gradeWordKo = text(root, "grade");
+            String grade = gradeWordKo.isBlank() ? null : gradeWord(GRADE_MARK + " " + gradeWordKo);
+            List<String> types = new ArrayList<>();
+            List<String> up = new ArrayList<>();
+            List<String> down = new ArrayList<>();
+            // 카드는 기준(criterion), 상태 한 줄(finding), 근거(basis) — 89판 꼴(2026-09-17 밤). 저장 줄은 "기준: 상태 — 근거".
+            // direction(UP/DOWN)은 92~95판에 있다가 뺐다(사장님 "업다운 없애볼까") — 응답에 있으면 여전히 올림/내림으로 간다.
+            for (JsonNode card : root.path("cards")) {
+                String criterion = oneLine(text(card, "criterion"));
+                String finding = oneLine(text(card, "finding"));
+                String basis = oneLine(text(card, "basis"));
+                String direction = text(card, "direction").strip().toUpperCase();
+                if (criterion.isBlank() && finding.isBlank()) {
+                    continue;
+                }
+                String head = criterion.isBlank() ? finding : finding.isBlank() ? criterion : criterion + ": " + finding;
+                String line = basis.isBlank() ? head : head + " — " + basis;
+                switch (direction) {
+                    case "UP" -> up.add(line);
+                    case "DOWN" -> down.add(line);
+                    default -> types.add(line);
+                }
+            }
+            if (grade == null) {
+                log.warn("판독 등급을 못 읽음({}) — 폴백 MID로 조립됨", gradeWordKo);
+            }
+            return new SolList("", List.copyOf(up), List.copyOf(down), grade,
+                    name.isBlank() ? null : name, why.isBlank() ? null : why, List.copyOf(types),
+                    boundary.isBlank() ? null : boundary);
+        } catch (Exception e) {
+            log.error("판독 JSON 파싱 실패 (본문 길이 {}자)", json == null ? 0 : json.length(), e);
+            throw new LlmException();
+        }
+    }
+
+    // B의 칸 하나를 한 줄로. 검색이 붙은 응답은 칸 안에 인용 링크가 섞여 오므로 여기서 걷는다(JSON 전체에 걸면 깨진다).
+    private static String oneLine(String s) {
+        return com.threeam.llm.OpenAiResponsesClient.stripCitations(s)
+                .replace("\r", " ").replace("\n", " ").replaceAll("\\s+", " ").strip();
+    }
+
+    private void dumpJudgementRawQuietly(String raw) {
+        try {
+            java.nio.file.Files.writeString(java.nio.file.Path.of("logs", "last-judgement-raw.txt"),
+                    raw == null ? "" : raw);
+        } catch (Exception e) {
+            log.debug("판독 원문 덤프 실패(무시)");
+        }
+    }
+
+    // A 원석(+ B JSON)에서 화면 재료까지. judgementJson이 있으면 A 본문 위에 B의 이름, 유형, 총평, 등급을 얹고
+    // A가 표식을 썼더라도 그 목록은 버린다. 없으면 A의 표식으로 옛 단일 호출 그대로.
+    public CompletableFuture<DirectReading> assemble(String a0, String judgementJson, String intakeBlock,
+                                                     String todayLine, List<String> userMessages) {
+        String story = storyBlock(intakeBlock, todayLine, userMessages);
         // 판정 호출은 분석 뒤 순차 — 판정이 분석 원석을 재료로 받는다(2026-08-29 전환).
         // 병렬이던 시절엔 가장 자유로운 호출(분석)과 가장 중요한 장(판정)이 서로 못 봐서
         // 판정이 사연 표면만 읽었다. 대기 시간이 한 호출만큼 늘어나는 것이 대가다.
@@ -171,29 +369,37 @@ public class ReadingLlm {
                 && !readingProperties.getVerdictGuide().isBlank();
         // 등급은 분류 호출이 라벨과 책갈피와 함께 낸다(2026-09-09, 호출 하나 줄임) — 분류는 JSON이라
         // 등급 토큰이 서사를 끌어당길 자리가 없다. 분류가 등급을 못 냈을 때만 매퍼가 뒤에서 붙인다.
-        return analysisCall(first)
+        return CompletableFuture.completedFuture(a0)
                 // 편집(luna)과 분류(terra)는 sol 원문에서 동시에 돈다 — 편집은 문단 수와 소제목을 못
                 // 바꾸므로 분류가 원문에 매긴 문단 번호가 편집본에도 그대로 맞는다. 조립 때 편집본이
                 // 꼴 검사를 통과하면 그 문단들 위에 라벨을 얹고, 아니면 원문 위에 얹는다(2026-09-10).
                 // 상대 마음 호출도 병렬 — 셋 다 분석만 읽고 서로를 모른다.
-                .thenCompose(a0 -> {
+                .thenCompose(raw -> {
                     // sol이 본문 뒤에 쓴 [올리는 것]/[내리는 것] 목록은 갈라 둔다 — 편집과 분류는
                     // 본문만 보고, 목록은 조립 때 정리표에 실린다(2026-09-10, 같은 호출 목록).
-                    dumpSolRawQuietly(a0);
-                    SolList sl = splitSolList(a0);
-                    if (!sl.present() || sl.up().isEmpty()) {
-                        log.warn("sol 목록이 비어 있음 — logs/last-sol-raw.txt로 표식을 확인");
-                    }
-                    if (sl.grade() == null && a0 != null && a0.contains(GRADE_MARK)) {
-                        log.warn("sol 등급을 못 읽음(중간을 골랐거나 다른 말) — 폴백 MID로 조립됨, 원문 확인");
+                    dumpSolRawQuietly(raw);
+                    SolList sl;
+                    if (judgementJson != null) {
+                        SolList b = parseJudgement(judgementJson);
+                        sl = new SolList(splitSolList(raw).body(), b.up(), b.down(), b.grade(), b.name(),
+                                b.why(), b.types(), b.boundary());
+                    } else {
+                        sl = splitSolList(raw);
+                        if (!sl.present() || sl.up().isEmpty()) {
+                            log.warn("sol 목록이 비어 있음 — logs/last-sol-raw.txt로 표식을 확인");
+                        }
+                        if (sl.grade() == null && raw != null && raw.contains(GRADE_MARK)) {
+                            log.warn("sol 등급을 못 읽음(중간을 골랐거나 다른 말) — 폴백 MID로 조립됨, 원문 확인");
+                        }
                     }
                     // sol이 고른 등급은 "판정 등급:" 줄로 본문 뒤에 붙는다 — 분류 호출은 등급 줄이 있으면
                     // 잣대로 다시 매기지 않고 그 등급의 이유만 쓴다(2026-09-11, 결론 낸 쪽이 등급도 고른다).
                     String a = sl.grade() == null ? sl.body()
                             : sl.body() + "\n\n판정 등급: " + sl.grade();
                     if (sl.present() || sl.grade() != null) {
-                        log.info("sol 목록: 올림 {} 내림 {} 유형 {} 등급 {}", sl.up().size(), sl.down().size(),
-                                sl.types().size(), sl.grade() == null ? "없음(분류 호출이 매김)" : sl.grade());
+                        log.info("{} 목록: 올림 {} 내림 {} 유형 {} 등급 {}", judgementJson != null ? "판독" : "sol",
+                                sl.up().size(), sl.down().size(), sl.types().size(),
+                                sl.grade() == null ? "없음(분류 호출이 매김)" : sl.grade());
                     }
                     CompletableFuture<String> edited = editQuietly(a);
                     return cardQuietly(a, story, edited, sl)
@@ -396,8 +602,15 @@ public class ReadingLlm {
     }
 
     private CompletableFuture<String> analysisCall(List<ChatMessage> prompt) {
-        CompletableFuture<String> out = "openai".equalsIgnoreCase(readingProperties.getProvider())
-                ? openAiClient.generateReadingText(prompt, "분석", readingProperties.getAnalysisModel())
+        boolean openai = "openai".equalsIgnoreCase(readingProperties.getProvider());
+        CompletableFuture<String> out = openai && readingProperties.isAnalysisWebSearch()
+                ? openAiClient.generateReadingTextWithSearch(prompt, "분석+검색",
+                        readingProperties.getAnalysisModel(), readingProperties.getAnalysisWebSearchContext(),
+                        readingProperties.getAnalysisWebSearchMaxCalls(),
+                        readingProperties.getAnalysisReasoningEffort())
+                : openai
+                ? openAiClient.generateReadingText(prompt, "분석", readingProperties.getAnalysisModel(),
+                        readingProperties.getAnalysisReasoningEffort())
                 // 그 외 프로바이더(mock 포함)는 기존 통로로 — mock이 프롬프트 내용으로 분기한다.
                 : llmClient.generateJsonDeep(prompt, null);
         // 모델이 스스로 "[전문가의 분석]" 머리말을 쓰는지 본다 — 원석은 서버가 머리말을 붙여 조립하므로
@@ -408,7 +621,8 @@ public class ReadingLlm {
             }
             // 소제목 줄을 빼자 강조를 **볼드**로 하기 시작했다(2026-09-10) — 화면은 마크다운을 안 그리므로
             // 별표만 걷는다. 지시로 막는 것보다 확실하고, 뜻은 그대로다.
-            String cleaned = a.replace("**", "");
+            // 표식을 소제목으로 쓰면서 빈 "##" 줄이 남는 판(2026-09-21) — 화면에 글자로 찍힌다.
+            String cleaned = a.replace("**", "").replaceAll("(?m)^#+\\s*$\\n?", "");
             log.debug("분석 첫 줄: {}", cleaned.strip().lines().findFirst().orElse(""));
             return cleaned;
         });
@@ -842,7 +1056,14 @@ public class ReadingLlm {
                 sb.append("- ").append(item.replace("·", ", ")).append('\n');
             }
         }
-        sb.append("이유: ").append(why);
+        if (why.contains("\n")) {
+            sb.append("판정:\n").append(why);
+        } else {
+            sb.append("이유: ").append(why);
+        }
+        if (solList.boundary() != null && !solList.boundary().isBlank()) {
+            sb.append("\n경계: ").append(solList.boundary().replace("·", ", "));
+        }
         return sb.toString();
     }
 
@@ -901,15 +1122,22 @@ public class ReadingLlm {
         }
         String name = "";
         String why = "";
+        String boundary = "";
         List<ReadingDraft.Decision.Summary.Item> up = new ArrayList<>();
         List<ReadingDraft.Decision.Summary.Item> down = new ArrayList<>();
         List<String> types = new ArrayList<>();
         List<ReadingDraft.Decision.Summary.Item> current = null;
         boolean inTypes = false;
         boolean started = false;
+        boolean inText = false;
+        StringBuilder text = new StringBuilder();
         for (String line : rawAnalysis.substring(at + SUMMARY_MARK.length()).split("\\n")) {
             String s = line.strip();
             if (s.isEmpty()) {
+                if (inText) {
+                    text.append('\n');
+                    continue;
+                }
                 if (started) {
                     break;
                 }
@@ -919,8 +1147,24 @@ public class ReadingLlm {
                 break;
             }
             started = true;
-            if (s.startsWith("이름:")) {
+            if (inText && !s.startsWith("경계:")) {
+                text.append(s).append('\n');
+                continue;
+            }
+            if (s.startsWith("판정:")) {
+                inText = true;
+                current = null;
+                inTypes = false;
+                String rest = s.substring(3).strip();
+                if (!rest.isEmpty()) {
+                    text.append(rest).append('\n');
+                }
+            } else if (s.startsWith("이름:")) {
                 name = s.substring(3).strip();
+                current = null;
+                inTypes = false;
+            } else if (s.startsWith("경계:")) {
+                boundary = s.substring(3).strip();
                 current = null;
                 inTypes = false;
             } else if (s.startsWith("올리는 것:")) {
@@ -947,10 +1191,14 @@ public class ReadingLlm {
                 }
             }
         }
+        if (why.isBlank() && text.length() > 0) {
+            why = text.toString().strip().replaceAll("\n{3,}", "\n\n");
+        }
         if (name.isBlank() && why.isBlank() && up.isEmpty() && down.isEmpty() && types.isEmpty()) {
             return null;
         }
-        return new ReadingDraft.Decision.Summary(name, List.copyOf(up), List.copyOf(down), why, List.copyOf(types));
+        return new ReadingDraft.Decision.Summary(name, List.copyOf(up), List.copyOf(down), why, List.copyOf(types),
+                boundary.isBlank() ? null : boundary);
     }
 
     // 옛 쉼표 나열 — 한 줄(note)이 없던 형식.
@@ -968,13 +1216,33 @@ public class ReadingLlm {
         if (t.isEmpty()) {
             return null;
         }
+        // "(핵심)"은 등급을 만든 판단 표시 — 이름에서 떼고 플래그로 든다. 이름에 남기면 문단 키워드 대조가 어긋난다.
+        boolean pivot = PIVOT_TAG.matcher(t).find();
+        if (pivot) {
+            t = PIVOT_TAG.matcher(t).replaceAll("").replaceAll("\\s{2,}", " ").replace(" :", ":").strip();
+        }
         java.util.regex.Matcher m = KEYWORD_LINE.matcher(t);
         if (!m.matches() || m.group(1).strip().isEmpty()) {
-            return new ReadingDraft.Decision.Summary.Item(t, null, "");
+            return new ReadingDraft.Decision.Summary.Item(t, null, "", pivot);
         }
         Integer para = m.group(2) == null ? null : Integer.parseInt(m.group(2));
         String note = m.group(3) == null ? "" : m.group(3).strip();
-        return new ReadingDraft.Decision.Summary.Item(m.group(1).strip(), para, note);
+        return new ReadingDraft.Decision.Summary.Item(m.group(1).strip(), para, note, pivot);
+    }
+
+    static final java.util.regex.Pattern PIVOT_TAG = java.util.regex.Pattern.compile("\\s*[(（]\\s*핵심\\s*[)）]");
+
+    // (핵심)이 붙은 항목을 목록 맨 앞으로 — 세기는 말이 아니라 자리로 나타낸다. 표식은 그대로 두어
+    // 정리표에 남고, 읽을 때 parseKeyword가 떼어 플래그로 든다.
+    private static List<String> pivotFirst(List<String> items) {
+        List<String> out = new ArrayList<>(items);
+        for (int i = 0; i < out.size(); i++) {
+            if (PIVOT_TAG.matcher(out.get(i)).find()) {
+                out.add(0, out.remove(i));
+                break;
+            }
+        }
+        return out;
     }
 
     // 정리 카드의 문장 검증 — 각 문장이 원문 문단에 그대로 있어야 한다. 새 문장은 하나까지.
@@ -1099,16 +1367,22 @@ public class ReadingLlm {
             "매우 낮음", "VERY_LOW", "낮음", "LOW", "높음", "HIGH", "매우 높음", "VERY_HIGH");
 
     // sol이 본문 뒤에 쓴 이름, 총평, 목록, 등급(같은 호출). 본문은 첫 표식 앞까지. 없는 것은 null이나 빈 목록.
+    // boundary는 한 칸 더는 아닌 이유(낮음이면 왜 매우 낮음이 아닌지, 높음이면 왜 매우 높음이 아닌지) — 총평과 분리(2026-09-17).
     record SolList(String body, List<String> up, List<String> down, String grade, String name, String why,
-                   List<String> types) {
-        static final SolList EMPTY = new SolList("", List.of(), List.of(), null, null, null, List.of());
+                   List<String> types, String boundary) {
+        static final SolList EMPTY = new SolList("", List.of(), List.of(), null, null, null, List.of(), null);
 
         SolList(String body, List<String> up, List<String> down, String grade) {
-            this(body, up, down, grade, null, null, List.of());
+            this(body, up, down, grade, null, null, List.of(), null);
         }
 
         SolList(String body, List<String> up, List<String> down, String grade, String name, String why) {
-            this(body, up, down, grade, name, why, List.of());
+            this(body, up, down, grade, name, why, List.of(), null);
+        }
+
+        SolList(String body, List<String> up, List<String> down, String grade, String name, String why,
+                List<String> types) {
+            this(body, up, down, grade, name, why, types, null);
         }
 
         boolean present() {
@@ -1164,6 +1438,9 @@ public class ReadingLlm {
         if (cut < 0) {
             return new SolList(strict ? prefixBody : analysis, List.of(), List.of(), null);
         }
+        // 첫 표식이 "## [이름]"처럼 소제목 기호 뒤에 있으면 그 줄 머리부터 자른다 — 표식 자리에서 자르면
+        // "##"이 본문 끝에 남는다.
+        cut = analysis.lastIndexOf('\n', cut) + 1;
         List<String> ups = new ArrayList<>();
         List<String> downs = new ArrayList<>();
         List<String> types = new ArrayList<>();
@@ -1180,8 +1457,14 @@ public class ReadingLlm {
         // "[판독 1 — 제목]" 머리줄 + 아래 문단 꼴로 쓰는 판(81판 실측) — 머리줄의 제목과 문단을 한 항목으로 접는다.
         String readTitle = null;
         StringBuilder readDesc = new StringBuilder();
+        boolean awaitGrade = false;
         for (String line : analysis.substring(cut).split("\\n")) {
             String s = line.strip();
+            // 표식을 소제목으로 쓰는 판("## [총평]", 2026-09-21 실측) — 머리 기호를 떼야 표식으로 읽힌다.
+            // 안 떼면 소제목 가지로 빠져 총평과 등급이 본문으로 새고 등급이 비었다.
+            if (s.matches("^#+\\s*\\[.*")) {
+                s = s.replaceFirst("^#+\\s*", "");
+            }
             if (readTitle != null && !s.startsWith("[") && !s.startsWith("#") && !s.startsWith("판정 등급")) {
                 if (!s.isEmpty()) {
                     if (readDesc.length() > 0) {
@@ -1225,7 +1508,19 @@ public class ReadingLlm {
                 current = null;
                 text = null;
                 grade = gradeWord(s);
+                // 표식만 쓰고 등급 말을 다음 줄에 두는 판 — 다음 줄에서 한 번 더 읽는다.
+                awaitGrade = grade == null;
                 inTail = true;
+            } else if (awaitGrade && !s.isEmpty()) {
+                awaitGrade = false;
+                String g = gradeWord(GRADE_MARK + " " + s);
+                if (g != null) {
+                    grade = g;
+                    continue;
+                }
+                if (!s.equals("---")) {
+                    tail.append(line).append('\n');
+                }
             } else if (s.startsWith(NAME_MARK) || s.startsWith(WHY_MARK)) {
                 // 표식 뒤 같은 줄의 말도 받고, 다음 줄들은 다음 표식 전까지 이어 붙인다.
                 current = null;
@@ -1265,7 +1560,8 @@ public class ReadingLlm {
             } else if (current != null && !s.isEmpty()) {
                 if (strict || s.startsWith("-") || s.startsWith("*") || s.matches("^\\d+[.)].*")) {
                     String t = itemText(s);
-                    if (!t.isEmpty() && current.size() < 6) {
+                    // 목록이 빈 판은 "없음" 한 줄로 쓰게 했다 — 항목이 아니다.
+                    if (!t.isEmpty() && !t.equals("없음") && current.size() < 6) {
                         current.add(t);
                     }
                 } else {
@@ -1309,7 +1605,7 @@ public class ReadingLlm {
         }
         String rest = tail.toString().strip();
         String body = head.isEmpty() ? rest : rest.isEmpty() ? head : head + "\n\n" + rest;
-        return new SolList(body, List.copyOf(ups), List.copyOf(downs), grade,
+        return new SolList(body, pivotFirst(ups), pivotFirst(downs), grade,
                 name.length() == 0 ? null : name.toString().strip(),
                 why.length() == 0 ? null : why.toString().strip(), List.copyOf(types));
     }

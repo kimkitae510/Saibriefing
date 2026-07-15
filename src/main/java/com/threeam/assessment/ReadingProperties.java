@@ -47,6 +47,28 @@ public class ReadingProperties {
     // 분석 호출만 다른 모델로 돌리는 실험 스위치(openai 경로). 비우면 판독 모델(sol). 등급 매퍼와
     // 분류는 그대로 판독 모델이라, 글만 바꿔 보고 나머지 비교가 흔들리지 않는다(2026-09-08).
     private String analysisModel = "";
+    // 분석 호출에 웹 검색 도구를 붙인다(Responses API). 판단 기준을 내장 지식 대신 검색으로 확인해 보는
+    // 2단계 실험(2026-09-17). 검색은 건당 요금이 따로 붙는다 — OpenAiProperties.priceWebSearchCall.
+    private boolean analysisWebSearch = false;
+    // 검색 결과를 얼마나 읽게 할지(low, medium, high). 클수록 입력 토큰이 는다.
+    private String analysisWebSearchContext = "medium";
+    // 한 판독에서 검색을 몇 번까지 허용할지(Responses API max_tool_calls). 건당 요금과 본문 토큰이 곱으로 붙는다.
+    private int analysisWebSearchMaxCalls = 5;
+
+    // 재회 판독 호출(B)의 시스템 지시 — 분석(A)과 같은 사연을 받아 이름, 카드, 총평, 등급을 JSON으로 낸다.
+    // 둘은 병렬이라 판독이 분석문을 보지 않는다. 비어 있으면 B를 돌리지 않고 단일 호출(A의 표식) 그대로.
+    private String judgementGuide = "";
+    // B 모델 — 비우면 판독 모델.
+    private String judgementModel = "";
+    // B에 웹 검색 도구를 붙인다(Responses API). A는 검색을 켜도 질이 같아 끄고(2026-09-17 실측), 검색은 B만.
+    private boolean judgementWebSearch = true;
+    private String judgementWebSearchContext = "medium";
+    private int judgementWebSearchMaxCalls = 5;
+    // B만 추론 강도를 따로(none/low/medium/high/xhigh). 비우면 공통 reasoning-effort(low).
+    private String judgementReasoningEffort = "";
+    // A(분석)만 추론 강도를 따로. B를 비운 판(112판)에서는 A가 글 끝에서 등급까지 고르는데, 그 일을
+    // 공통 기본값 low로 하면 같은 사연이 판마다 두 칸씩 오간다(2026-09-20 실측).
+    private String analysisReasoningEffort = "";
 
     // 분류 호출(card-by-sol일 때)과 등급 매퍼의 모델 — 비우면 판독 모델(sol). 분류는 출력이 작아
     // 비싼 모델의 값이 입력 토큰에 다 들어가서, 한 급 싼 모델로도 되는지 보는 스위치(2026-09-09).

@@ -25,6 +25,19 @@ public class MockLlmClient implements LlmClient {
     @Override
     public CompletableFuture<String> generateJsonDeep(List<ChatMessage> messages,
                                                       Map<String, Object> responseSchema) {
+        // 재회 판독(B)은 유저 차례가 사연뿐이라 문구로 못 가린다 — 스키마 동일성으로 가린다.
+        if (responseSchema == ReadingLlm.JUDGEMENT_SCHEMA) {
+            return CompletableFuture.completedFuture("""
+                    {"name": "(개발용 임시) 조율 없이 쌓인 피로가 만든 이별",
+                     "cards": [
+                       {"criterion": "같은 문제의 반복", "finding": "갈등을 마주 앉아 조율한 경험이 없습니다", "basis": "다시 시작해도 같은 일이 반복되리라는 기대가 상대 쪽에 남아 있어 가능성을 내립니다"},
+                       {"criterion": "관계 자산", "finding": "이별 직전까지 호의가 있었습니다", "basis": "마음이 사라진 이별이 아니라 재선택의 여지는 남습니다"},
+                       {"criterion": "마지막 감정", "finding": "지친 상태로 끝났습니다", "basis": "분노가 아닌 피로라 시간이 지나면 가라앉는 종류입니다"}
+                     ],
+                     "summary": "(개발용 임시) 마음의 문제가 아니라 반복 기대의 문제라 낮게 보지만, 호의가 남아 매우 낮음은 아닙니다.",
+                     "grade": "낮음"}
+                    """);
+        }
         boolean analysisCall = messages.stream()
                 .anyMatch(m -> m.content().startsWith(ReadingLlm.ANALYSIS_ASK));
         if (analysisCall) {

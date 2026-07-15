@@ -1384,6 +1384,33 @@ class ReadingLlmTest {
     }
 
     @Test
+    void splitSolList_marksWrittenAsHeadings() {
+        // 표식을 ## 소제목으로 쓰고 빈 목록은 "없음"으로 쓴 판
+        String raw = "본문입니다.\n\n## [이름] 붙잡지 않은 이별\n\n## [올리는 것]\n- 없음\n\n## [내리는 것]\n"
+                + "- 유지 의지: 낮았습니다 — 조정을 제안하지 않았습니다.\n\n## [총평]\n\n호감은 있었지만 지키지 않았습니다.\n\n"
+                + "## [가능성 등급]\n\n낮음\n";
+        ReadingLlm.SolList sl = ReadingLlm.splitSolList(raw);
+        assertThat(sl.body()).isEqualTo("본문입니다.");
+        assertThat(sl.name()).isEqualTo("붙잡지 않은 이별");
+        assertThat(sl.up()).isEmpty();
+        assertThat(sl.down()).containsExactly("유지 의지: 낮았습니다 — 조정을 제안하지 않았습니다.");
+        assertThat(sl.why()).isEqualTo("호감은 있었지만 지키지 않았습니다.");
+        assertThat(sl.grade()).isEqualTo("LOW");
+    }
+
+    @Test
+    void splitSolList_pivotItemGoesFirst() {
+        String raw = "본문.\n\n[올리는 것]\n- 과거 애정: 컸다 — 군 생활을 기다렸다.\n"
+                + "- 6월의 접근 (핵심): 먼저 관계를 연 적이 있다 — 먼저 연락해 만났다.\n"
+                + "[내리는 것]\n- 없음\n[가능성 등급] 높음\n";
+        ReadingLlm.SolList sl = ReadingLlm.splitSolList(raw);
+        assertThat(sl.up()).hasSize(2);
+        assertThat(sl.up().get(0)).startsWith("6월의 접근 (핵심)");
+        assertThat(sl.down()).isEmpty();
+        assertThat(sl.grade()).isEqualTo("HIGH");
+    }
+
+    @Test
     void splitSolList_readsGradeWord() {
         String raw = "본문입니다.\n\n[올리는 것]\n- 사랑을 확인했습니다.\n[내리는 것]\n- 2주를 요청했습니다.\n"
                 + "[가능성 등급] 매우 낮음\n";
@@ -1517,5 +1544,83 @@ class ReadingLlmTest {
         assertThat(sl.types()).containsExactly("판단 기준: 소견 — 근거", "둘째 기준: 소견 — 근거");
         assertThat(sl.why()).isEqualTo("낮게.");
         assertThat(sl.grade()).isEqualTo("LOW");
+    }
+
+    @Test
+    void parseJudgement_repairsCardsArrayBracketEatenByCitationStrip() {
+        String broken = "{\"grade\":\"낮음\",\"summary\":\"총평.\",\"cards\":{\"finding\":\"소견\",\"criterion\":\"기준\",\"basis\":\"근거\"},"
+                + "{\"finding\":\"소견2\",\"criterion\":\"기준2\",\"basis\":\"근거2\"}],\"name\":\"이름\"}";
+        ReadingLlm.SolList sl = new ReadingLlm(llmClient, objectMapper, new ReadingProperties(), null, null)
+                .parseJudgement(broken);
+        assertThat(sl.grade()).isEqualTo("LOW");
+        assertThat(sl.name()).isEqualTo("이름");
+        assertThat(sl.types()).containsExactly("기준: 소견 — 근거", "기준2: 소견2 — 근거2");
+    }
+
+    @Test
+    void parseJudgement_readsBoundaryAndSummaryBlockRoundTripsIt() {
+        String json = "{\"name\":\"이름\","
+                + "\"cards\":[{\"criterion\":\"기준\",\"finding\":\"상태\",\"basis\":\"근거\"}],"
+                + "\"summary\":\"높게 봅니다.\",\"boundary\":\"옆에 사람이 있어 매우 높음은 아닙니다.\",\"grade\":\"높음\","
+                + "\"evidence\":\"검색에서 확인한 것.\"}";
+        ReadingLlm.SolList sl = new ReadingLlm(llmClient, objectMapper, new ReadingProperties(), null, null)
+                .parseJudgement(json);
+        assertThat(sl.boundary()).startsWith("옆에 사람이 있어");
+        String block = "[재회 정리]\n이름: 이름\n"
+                + "유형:\n- 기준: 상태 — 근거\n이유: 높게 봅니다.\n경계: 옆에 사람이 있어 매우 높음은 아닙니다.";
+        ReadingDraft.Decision.Summary summary = ReadingLlm.parseSummary(block);
+        assertThat(summary.types()).containsExactly("기준: 상태 — 근거");
+        assertThat(summary.why()).isEqualTo("높게 봅니다.");
+        assertThat(summary.boundary()).isEqualTo("옆에 사람이 있어 매우 높음은 아닙니다.");
+    }
+
+    @Test
+    void parseJudgement_directionSplitsCardsIntoUpAndDown_andSummaryBlockRoundTripsThem() {
+        String json = "{\"name\":\"이름\","
+                + "\"cards\":[{\"criterion\":\"종결 의사\",\"finding\":\"닫는 쪽\",\"basis\":\"확인 연락도 읽고 답하지 않았습니다.\",\"direction\":\"DOWN\"},"
+                + "{\"criterion\":\"잔존 애정\",\"finding\":\"\",\"basis\":\"헤어지기 전까지 잘해 주었습니다.\",\"direction\":\"UP\"}],"
+                + "\"summary\":\"낮게 봅니다.\",\"grade\":\"낮음\",\"evidence\":\"\"}";
+        ReadingLlm.SolList sl = new ReadingLlm(llmClient, objectMapper, new ReadingProperties(), null, null)
+                .parseJudgement(json);
+        assertThat(sl.down()).containsExactly("종결 의사: 닫는 쪽 — 확인 연락도 읽고 답하지 않았습니다.");
+        assertThat(sl.up()).containsExactly("잔존 애정 — 헤어지기 전까지 잘해 주었습니다.");
+        assertThat(sl.types()).isEmpty();
+        assertThat(sl.grade()).isEqualTo("LOW");
+        String block = "[재회 정리]\n이름: 이름\n올리는 것:\n- 잔존 애정 — 헤어지기 전까지 잘해 주었습니다.\n"
+                + "내리는 것:\n- 종결 의사: 닫는 쪽 — 확인 연락도 읽고 답하지 않았습니다.\n이유: 낮게 봅니다.";
+        ReadingDraft.Decision.Summary summary = ReadingLlm.parseSummary(block);
+        assertThat(summary.up()).extracting(ReadingDraft.Decision.Summary.Item::keyword).containsExactly("잔존 애정");
+        assertThat(summary.up().get(0).note()).isEqualTo("헤어지기 전까지 잘해 주었습니다.");
+        assertThat(summary.down()).extracting(ReadingDraft.Decision.Summary.Item::keyword).containsExactly("종결 의사: 닫는 쪽");
+        assertThat(summary.down().get(0).para()).isNull();
+        assertThat(summary.types()).isEmpty();
+    }
+
+    @Test
+    void parseJudgement_textFieldKeepsParagraphs_andSummaryBlockRoundTripsThem() {
+        String json = "{NAME,TEXT,GRADE,EVID}"
+                .replace("NAME", "\"name\":\"이름\"")
+                .replace("TEXT", "\"text\":\"첫 문단입니다.\\n\\n둘째 문단입니다.\"")
+                .replace("GRADE", "\"grade\":\"낮음\"")
+                .replace("EVID", "\"evidence\":\"\"");
+        ReadingLlm.SolList sl = new ReadingLlm(llmClient, objectMapper, new ReadingProperties(), null, null)
+                .parseJudgement(json);
+        assertThat(sl.why()).isEqualTo("첫 문단입니다.\n\n둘째 문단입니다.");
+        assertThat(sl.grade()).isEqualTo("LOW");
+        String block = "[재회 정리]\n이름: 이름\n판정:\n첫 문단입니다.\n\n둘째 문단입니다.\n\n판정 등급: LOW";
+        ReadingDraft.Decision.Summary summary = ReadingLlm.parseSummary(block);
+        assertThat(summary.name()).isEqualTo("이름");
+        assertThat(summary.why()).isEqualTo("첫 문단입니다.\n\n둘째 문단입니다.");
+        assertThat(summary.types()).isEmpty();
+    }
+
+    @Test
+    void parseJudgement_proseWithGradeLine_splitsGradeAndKeepsParagraphs() {
+        String raw = "첫 문단입니다.\n\n둘째 문단입니다.\n\n판정 등급: 낮음\n";
+        ReadingLlm.SolList sl = new ReadingLlm(llmClient, objectMapper, new ReadingProperties(), null, null)
+                .parseJudgement(raw);
+        assertThat(sl.grade()).isEqualTo("LOW");
+        assertThat(sl.why()).isEqualTo("첫 문단입니다.\n\n둘째 문단입니다.");
+        assertThat(sl.name()).isNull();
     }
 }

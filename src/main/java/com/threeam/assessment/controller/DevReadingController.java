@@ -115,6 +115,24 @@ public class DevReadingController {
             if (reading.containsKey("analysis-ask")) {
                 readingProperties.setAnalysisAsk(str(reading.get("analysis-ask")));
             }
+            readingProperties.setAnalysisWebSearch(Boolean.TRUE.equals(reading.get("analysis-web-search")));
+            if (reading.containsKey("analysis-web-search-context")) {
+                readingProperties.setAnalysisWebSearchContext(str(reading.get("analysis-web-search-context")));
+            }
+            if (reading.get("analysis-web-search-max-calls") instanceof Number n) {
+                readingProperties.setAnalysisWebSearchMaxCalls(n.intValue());
+            }
+            readingProperties.setJudgementGuide(str(reading.get("judgement-guide")));
+            readingProperties.setJudgementModel(str(reading.get("judgement-model")));
+            if (reading.containsKey("judgement-web-search")) {
+                readingProperties.setJudgementWebSearch(Boolean.TRUE.equals(reading.get("judgement-web-search")));
+            }
+            if (reading.containsKey("judgement-web-search-context")) {
+                readingProperties.setJudgementWebSearchContext(str(reading.get("judgement-web-search-context")));
+            }
+            if (reading.get("judgement-web-search-max-calls") instanceof Number n) {
+                readingProperties.setJudgementWebSearchMaxCalls(n.intValue());
+            }
             readingProperties.setGradeGuide(str(reading.get("grade-guide")));
             Object bySol = reading.get("card-by-sol");
             readingProperties.setCardBySol(Boolean.TRUE.equals(bySol));
@@ -125,8 +143,9 @@ public class DevReadingController {
             readingProperties.setEditModel(str(reading.get("edit-model")));
             Object decision = reading.get("decision-call");
             readingProperties.setDecisionCall(decision == null || Boolean.TRUE.equals(decision));
-            log.info("dev: reading.yml 다시 읽음 — card-guide {}자, card-by-sol={}",
-                    readingProperties.getCardGuide().length(), readingProperties.isCardBySol());
+            log.info("dev: reading.yml 다시 읽음 — card-guide {}자, card-by-sol={}, judgement-guide {}자",
+                    readingProperties.getCardGuide().length(), readingProperties.isCardBySol(),
+                    readingProperties.getJudgementGuide().length());
         } catch (IOException | RuntimeException e) {
             log.warn("dev: reading.yml 다시 읽기 실패 — 기존 지시문 유지: {}", e.toString());
         }

@@ -55,15 +55,25 @@ public record ReadingDraft(
         // 이별을 부르는 한 줄, up/down은 가능성을 올리고 내리는 것의 키워드, why는 지금 이
         // 등급인 이유 한 문장. 분석 호출은 이걸 모른다(재회 정리를 향해 쓰이지 않게). 옛 저장분은 null.
         // types는 이 사연에 겹친 이별의 유형 한 줄씩(76판 [유형 비교]). 옛 저장분은 null.
-        public record Summary(String name, List<Item> up, List<Item> down, String why, List<String> types) {
+        // boundary는 한 칸 더는 아닌 이유(낮음이면 왜 매우 낮음은 아닌지) — 총평과 따로 카드로 그린다. 옛 저장분은 null.
+        public record Summary(String name, List<Item> up, List<Item> down, String why, List<String> types,
+                              String boundary) {
             public Summary(String name, List<Item> up, List<Item> down, String why) {
-                this(name, up, down, why, List.of());
+                this(name, up, down, why, List.of(), null);
+            }
+
+            public Summary(String name, List<Item> up, List<Item> down, String why, List<String> types) {
+                this(name, up, down, why, types, null);
             }
 
             // 키워드와 그 판단이 들어 있는 문단 번호(1-based, 분류 호출의 번호). 번호가 잡히면
             // 그 문단의 ReadingBlock.keyword에 같은 키워드가 붙어 카드와 본문이 서로를 가리킨다.
             // note는 그 이름이 왜 올리는지 또는 내리는지 한 줄 — 카드만 읽어도 무엇이 왜인지 알게.
-            public record Item(String keyword, Integer para, String note) {
+            // pivot은 등급을 만든 판단 표시 — sol이 항목 이름 뒤에 (핵심)을 붙인 것. 화면이 맨 위로 올리고 표시한다.
+            public record Item(String keyword, Integer para, String note, boolean pivot) {
+                public Item(String keyword, Integer para, String note) {
+                    this(keyword, para, note, false);
+                }
             }
         }
 
