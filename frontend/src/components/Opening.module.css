@@ -1,0 +1,159 @@
+/* 오프닝의 되짚기 화면. 문진과 같은 자리, 같은 글씨, 같은 선. 받은 답은 문진에서 본 장 이름
+   그대로 줄로 쌓인다 — 열두 개를 답한 게 아니라 넷을 답한 것으로 읽히게. */
+.recapWrap {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.head {
+  margin-top: 44px;
+  animation: rise 0.26s ease both;
+}
+
+.section {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.title {
+  margin: 0;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.5px;
+  word-break: keep-all;
+}
+
+.why {
+  margin: 10px 0 0;
+  color: var(--text-sub);
+  font-size: 14px;
+  line-height: 1.6;
+  word-break: keep-all;
+}
+
+.recap {
+  margin: 28px 0 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  animation: rise 0.3s ease both;
+  animation-delay: 0.08s;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.recapRow {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 14px;
+  padding: 14px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+
+.recap dt {
+  margin: 0;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  padding-top: 2px;
+}
+
+.recap dd {
+  margin: 0;
+  color: var(--text-sub);
+  word-break: keep-all;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .head,
+  .recap {
+    animation: none;
+  }
+}
+
+.foot {
+  margin-top: auto;
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 확정 버튼은 흰 면이다. 검은 바탕에서 흰 면은 색이 아니라 빛이라 도형으로 안 읽히고 어떤 강조색과도
+   안 싸운다(애플 TV, 아크의 다크 주 버튼). 보라는 면에 칠하지 않고 체크 한 획, 게이지 점처럼 잉크로만 쓴다 */
+.cta {
+  height: 48px;
+  border: none;
+  border-radius: 12px;
+  background: var(--text);
+  color: #111114;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 0.14s ease;
+}
+
+.cta:hover {
+  opacity: 0.92;
+}
+
+.cta:active {
+  opacity: 0.8;
+}
+
+.cta:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 되돌아가는 길은 나아가는 길과 같은 무게로 세우지 않는다 */
+.quiet {
+  border: none;
+  background: transparent;
+  padding: 12px 4px;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.quiet:hover {
+  color: var(--text-sub);
+}
+
+.quiet:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.error {
+  margin-top: 14px;
+  color: #d99a9a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+

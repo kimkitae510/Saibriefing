@@ -1,15 +1,14 @@
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { PhoneFrame } from '../components/PhoneFrame';
 import { BusinessInfo } from '../components/BusinessInfo';
 import { SocialLogin } from '../components/SocialLogin';
+import { Opening, recapPhaseOf } from '../components/Opening';
 import {
   EMPTY_DRAFT,
-  IntakeWizard,
   draftToIntake,
   hasAnyAnswer,
   intakeSteps,
-  recapLines,
   type IntakeDraft,
 } from '../components/IntakeWizard';
 import { guestStart } from '../api/auth';
@@ -27,9 +26,8 @@ import { BRAND } from '../brand';
 // 실제로 말을 걸었을 때, 즉 첫 전송 시점에 만든다. 질문 단계의 답도 그때까지 화면이 들고
 // 있다가 한 번에 보낸다(위저드를 앞에 세운 덕에 크롤러는 오히려 더 못 들어온다).
 //
-// 화면은 한 자리에서 단계만 바뀐다: 0 첫 화면, 1~N 질문, N+1 되짚기, 그 뒤가 사연 쓰기.
-// N은 답에 따라 늘고 준다(가지 질문) — 그래서 단계 번호를 상수로 박지 않고 질문 목록
-// 길이로 판정한다. 첫 화면에 적는 개수는 가지 없는 기본 길이다.
+// 화면은 한 자리에서 단계만 바뀐다: 0 첫 화면, 그 뒤는 오프닝(Opening)이 질문, 되짚기,
+// 사연 쓰기를 맡는다. 첫 화면에 적는 개수는 가지 없는 기본 길이다.
 //
 // 첫 화면은 게임 오프닝의 문법을 빌린다: 검은 바탕에 문장 하나, 답하면 다음. 캐릭터도
 // 말풍선도 없이 화면 전체가 말을 건다. 다만 문장은 "이야기를 들어드린다"가 아니라
@@ -41,26 +39,10 @@ const HOOK = '보내려던 그 메시지,\n판을 읽고 보내도 늦지 않습
 const HOOK_WHY =
   '이별까지의 상황을 넣으면 소프트웨어가 되는 판인지, 무엇 때문인지, 지금 할 일이 무엇인지를 리포트로 냅니다. 안 되는 판이면 안 된다고도 말합니다.';
 
-// 되짚기 화면의 한 줄. 판을 가르는 답 하나를 골라 그 뜻을 말한다 — 약속이 아니라 이 답이
-// 무엇을 바꾸는지다. 문구는 임시.
-function transitionHook(draft: IntakeDraft): string {
-  if (draft.priorReunion === 'MANY' && draft.repeatBreakupPattern === 'SAME_ISSUE') {
-    return '같은 문제로 두 번 이상 끊긴 판입니다. 연락이 닿는지보다 왜 같은 자리에서 어긋나는지가 먼저입니다.';
-  }
-  if (draft.contactMode === 'BLOCKED') {
-    return '차단은 끝이 아니라 멈춤입니다. 끊기기 직전에 무엇이 있었는지가 이 판을 가릅니다.';
-  }
-  if (draft.clingReaction === 'CLUNG_WAVERED') {
-    return '매달렸을 때 흔들린 상대입니다. 그 흔들림이 무엇이었는지가 판의 핵심입니다.';
-  }
-  return '여기까지가 판의 뼈대입니다. 살은 이야기가 채웁니다.';
-}
-
 export function IntroPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [draft, setDraft] = useState<IntakeDraft>(EMPTY_DRAFT);
-  const [input, setInput] = useState('');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
 
@@ -68,8 +50,6 @@ export function IntroPage() {
   // 누른 사람이 이전 질문이 아니라 사이트 밖으로 나간다. 라우터를 거쳐 밀어야 라우터가 쥐고
   // 있는 히스토리 인덱스와 어긋나지 않는다(직접 pushState하면 그게 덮인다).
   const phase = (location.state as { introPhase?: number } | null)?.introPhase ?? 0;
-  const steps = intakeSteps(draft);
-  const PHASE_RECAP = steps.length + 1;
   const goPhase = (next: number) => navigate('.', { state: { introPhase: next } });
   // 이전은 새 칸을 밀지 않고 되감는다 — 밀면 뒤로가기가 지나온 자리를 다시 밟아 맴돈다.
   const goBack = () => navigate(-1);
@@ -78,8 +58,7 @@ export function IntroPage() {
   if (tokenStore.getAccess()) return <Navigate to="/stories" replace />;
 
   async function handleStart() {
-    const content = input.trim();
-    if (!content || starting) return;
+    if (starting) return;
     setStarting(true);
     setError('');
     try {
@@ -91,8 +70,8 @@ export function IntroPage() {
       if (hasAnyAnswer(draft)) {
         await putIntake(story.id, draftToIntake(draft)).catch(() => {});
       }
-      // 첫 문장을 다시 치게 하면 시작이 두 번이 된다 — 채팅 화면이 받아서 그대로 보낸다
-      navigate(`/stories/${story.id}`, { replace: true, state: { prefill: content, autoSend: true } });
+      // 빈 방으로 간다 — 채팅 화면이 상담자의 첫 말(대본)을 청한다
+      navigate(`/stories/${story.id}`, { replace: true });
     } catch (e) {
       setError(extractErrorMessage(e, '시작하지 못했습니다. 잠시 후 다시 시도해 주세요.'));
       setStarting(false);
@@ -110,7 +89,6 @@ export function IntroPage() {
           <>
             <div className={styles.logo}>{BRAND}</div>
             <div className={styles.hookWrap}>
-              <div className={styles.mark} />
               <h1 className={styles.hook}>{HOOK}</h1>
               <p className={styles.hookWhy}>{HOOK_WHY}</p>
               <button className={styles.cta} onClick={() => goPhase(1)}>
@@ -124,7 +102,7 @@ export function IntroPage() {
             <div className={styles.startBlock}>
               {/* 질문을 다 넘겨야 쓸 칸이 나오면, 당장 쏟아내려고 들어온 사람은 그 전에 나간다.
                   탈출구를 열어둔다 — 안 물어서 잃는 것보다 말도 못 하고 나가는 게 크다 */}
-              <button className={styles.skipAsk} onClick={() => goPhase(PHASE_RECAP + 1)}>
+              <button className={styles.skipAsk} onClick={() => goPhase(recapPhaseOf(draft))}>
                 바로 이야기부터 할게요
               </button>
             </div>
@@ -174,74 +152,17 @@ export function IntroPage() {
           </>
         )}
 
-        {phase >= 1 && phase <= steps.length && (
-          <IntakeWizard
-            step={phase - 1}
+        {phase >= 1 && (
+          <Opening
+            phase={phase}
+            goPhase={goPhase}
+            goBack={goBack}
             draft={draft}
-            onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
-            onNext={() => goPhase(phase + 1)}
-            onBack={goBack}
+            onDraft={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
+            starting={starting}
+            error={error}
+            onStart={handleStart}
           />
-        )}
-
-        {phase === PHASE_RECAP && (
-          <div className={styles.recapWrap}>
-            <div className={styles.mark} />
-            <h1 className={styles.hook}>
-              {recapLines(draft).length ? '판이 잡혔습니다' : '이제 이야기를 들을 차례입니다'}
-            </h1>
-            {recapLines(draft).length > 0 && (
-              <dl className={styles.recap}>
-                {recapLines(draft).map(([k, v]) => (
-                  <Fragment key={k}>
-                    <dt>{k}</dt>
-                    <dd>{v}</dd>
-                  </Fragment>
-                ))}
-              </dl>
-            )}
-            <p className={styles.hookWhy}>
-              {transitionHook(draft)} 이제 무슨 일이 있었는지 들려주세요.
-            </p>
-            <button className={styles.cta} onClick={() => goPhase(PHASE_RECAP + 1)}>
-              이야기 시작하기
-            </button>
-            <div className={styles.recapFoot}>
-              <button className={styles.skipAsk} onClick={goBack}>
-                이전
-              </button>
-            </div>
-          </div>
-        )}
-
-        {phase > PHASE_RECAP && (
-          <>
-            {error && <div className={styles.error}>{error}</div>}
-            <div className={styles.composer}>
-              <div className={styles.composerLabel}>
-                이별까지의 흐름과 현재 상황을 자세히 적어주시면 더 정확하게 분석해 드립니다
-              </div>
-              <textarea
-                className={styles.input}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="여기에 적어주세요"
-                rows={6}
-                disabled={starting}
-                autoFocus
-              />
-              <button
-                className={styles.send}
-                onClick={handleStart}
-                disabled={!input.trim() || starting}
-              >
-                {starting ? '시작하는 중…' : '이야기 시작하기'}
-              </button>
-              <button className={styles.skipAsk} onClick={goBack} disabled={starting}>
-                이전
-              </button>
-            </div>
-          </>
         )}
       </div>
     </PhoneFrame>

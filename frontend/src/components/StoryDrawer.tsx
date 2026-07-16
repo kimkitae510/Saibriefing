@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HelpModal, CONTACT_OPENCHAT_URL } from './HelpModal';
-import { listStories, createStory, deleteStory, type StoryResponse } from '../api/story';
+import { listStories, deleteStory, type StoryResponse } from '../api/story';
 import { getUsage, type UsageStatusResponse } from '../api/usage';
 import { logout } from '../api/auth';
 import { extractErrorMessage } from '../api/client';
@@ -22,7 +22,6 @@ export function StoryDrawer({ currentStoryId, onClose }: { currentStoryId?: numb
   const [usage, setUsage] = useState<UsageStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<StoryResponse | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -56,17 +55,11 @@ export function StoryDrawer({ currentStoryId, onClose }: { currentStoryId?: numb
     };
   }, []);
 
-  async function handleNew() {
-    if (creating) return;
-    setCreating(true);
-    try {
-      const story = await createStory();
-      navigate(`/stories/${story.id}`);
-      onClose();
-    } catch (e) {
-      setError(extractErrorMessage(e, '새 대화를 시작하지 못했습니다.'));
-      setCreating(false);
-    }
+  // 방은 여기서 만들지 않는다. 오프닝(문진)을 거친 뒤 첫 전송에서 만든다 — 문진은 사연
+  // 단위라 방마다 다시 받아야 하고, 여기서 만들면 질문만 넘기다 나간 빈 방이 목록에 쌓인다.
+  function handleNew() {
+    navigate('/stories/new');
+    onClose();
   }
 
   async function handleLogout() {
@@ -256,11 +249,11 @@ export function StoryDrawer({ currentStoryId, onClose }: { currentStoryId?: numb
             그 창에서 방을 하나 더 파면 계정 단위인 체험 횟수가 두 방으로 갈려 어느 쪽도
             끝을 못 본다 — 여기서 한 번 더 막는다 */}
         {!usage?.guest && (
-        <button className={styles.newButton} onClick={handleNew} disabled={creating}>
+        <button className={styles.newButton} onClick={handleNew}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
-            <path d="M12 5v14M5 12h14" stroke="#1a1a1d" strokeWidth="2.2" strokeLinecap="round" />
+            <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
-          {creating ? '시작하는 중…' : '새 이야기'}
+          새 이야기
         </button>
         )}
 

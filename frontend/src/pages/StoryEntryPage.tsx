@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PhoneFrame } from '../components/PhoneFrame';
-import { listStories, createStory } from '../api/story';
+import { listStories } from '../api/story';
 import { extractErrorMessage } from '../api/client';
 import styles from './StoryEntryPage.module.css';
 
 // 목록 화면이 서랍으로 내려가면서 /stories 는 머무는 화면이 아니라 통로가 됐다.
-// 가장 최근 사연으로 보내고, 하나도 없으면 만들어서 보낸다 — 갈 곳이 여기밖에 없다.
+// 가장 최근 사연으로 보내고, 하나도 없으면 오프닝(문진)으로 보낸다 — 방은 거기서 첫 전송에
+// 만들어진다. 여기서 만들면 문진 없는 방이 생긴다.
 export function StoryEntryPage() {
   const navigate = useNavigate();
   const [error, setError] = useState('');
@@ -18,8 +19,11 @@ export function StoryEntryPage() {
     (async () => {
       try {
         const stories = await listStories();
-        const target = stories[0] ?? (await createStory());
-        navigate(`/stories/${target.id}`, { replace: true });
+        if (!stories.length) {
+          navigate('/stories/new', { replace: true });
+          return;
+        }
+        navigate(`/stories/${stories[0].id}`, { replace: true });
       } catch (e) {
         setError(extractErrorMessage(e, '대화를 여는 데 실패했습니다.'));
       }

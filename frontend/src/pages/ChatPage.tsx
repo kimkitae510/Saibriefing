@@ -153,6 +153,8 @@ export function ChatPage() {
   }
 
   const aliveRef = useRef(true);
+  // 첫 말을 이미 청했는지. 서버도 메시지가 있으면 안 만들지만, 두 요청이 답이 붙기 전에 겹치면 못 막는다.
+  const openingRef = useRef(false);
   // 스크롤 컨테이너 자체. 위치를 잴 때도, 내릴 때도 이 요소만 만진다.
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -205,7 +207,9 @@ export function ChatPage() {
       }
       // 빈 방 — 상담자가 먼저 말을 건다. 서버는 메시지가 있으면 아무것도 안 하므로 새로고침에도 안전하고,
       // 실패하면 폴백이 붙어 재시도 버튼이 뜬다(그 재시도도 첫 말을 다시 만든다).
-      if (!last && !page.hasNext) {
+      // 개발 모드(StrictMode)는 마운트 효과를 두 번 돌려 이 조회도 두 번 온다 — 첫 말 요청은 한 번만.
+      if (!last && !page.hasNext && !openingRef.current) {
+        openingRef.current = true;
         setWaiting(true);
         try {
           await openConversation(storyId);

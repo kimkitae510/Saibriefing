@@ -25,94 +25,60 @@
   letter-spacing: 0.06em;
 }
 
-/* 첫 화면과 되짚기 화면의 몸통. 문진 화면과 같은 문법 — 가운데, 선 하나, 문장 하나 */
-.hookWrap,
-.recapWrap {
+/* 첫 화면의 몸통. 문진과 같은 자리(위쪽 삼분의 일), 같은 글씨, 같은 주 버튼.
+   문장 하나가 위의 빈 공간을 등지고 선다 — 그 빈 공간이 새벽의 자리다 */
+.hookWrap {
   flex: 1;
   width: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 24px 0;
-}
-
-.mark {
-  width: 22px;
-  height: 1px;
-  background: var(--accent);
-  margin: 0 auto 24px;
+  padding: 44px 0 0;
 }
 
 .hook {
   margin: 0;
   color: var(--text);
-  font-size: 23px;
-  font-weight: 600;
-  line-height: 1.5;
-  letter-spacing: -0.2px;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.38;
+  letter-spacing: -0.6px;
   white-space: pre-line;
-  text-wrap: balance;
   word-break: keep-all;
 }
 
 .hookWhy {
-  margin: 14px auto 0;
-  max-width: 26em;
+  margin: 14px 0 0;
   color: var(--text-sub);
-  font-size: 13.5px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.65;
   word-break: keep-all;
 }
 
-/* 시작은 채운 버튼이 아니라 테두리만 — 검은 바탕에 보라 덩어리가 뜨면 화면이 그 버튼이 된다 */
+/* 확정 버튼은 흰 면 — 되짚기의 시작 버튼과 같다. 보라는 면에 칠하지 않는다 */
 .cta {
-  margin-top: 36px;
-  padding: 13px 34px;
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--accent);
+  margin-top: 32px;
+  height: 48px;
+  border: none;
+  border-radius: 12px;
+  background: var(--text);
+  color: #111114;
   font-size: 15px;
+  font-weight: 700;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: opacity 0.14s ease;
 }
 
 .cta:hover {
-  background: var(--accent);
-  color: var(--on-accent);
+  opacity: 0.92;
+}
+
+.cta:active {
+  opacity: 0.8;
 }
 
 .hookWrap .composerLabel {
-  margin-top: 12px;
-}
-
-.recap {
-  margin: 28px 0 0;
-  width: 100%;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 9px 18px;
-  text-align: left;
-  font-size: 13.5px;
-  line-height: 1.5;
-}
-
-.recap dt {
-  margin: 0;
-  color: var(--text-muted);
-}
-
-.recap dd {
-  margin: 0;
-  color: var(--text-sub);
-  word-break: keep-all;
-}
-
-.recapFoot {
-  margin-top: 18px;
+  margin-top: 10px;
 }
 
 .headline {
@@ -206,14 +172,6 @@
   text-align: center;
 }
 
-.composer {
-  width: 100%;
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
 /* 소개 화면의 시작 버튼 자리. 컴포저가 있던 자리를 그대로 물려받아, 처음 온 사람의 눈이
    가던 곳이 안 바뀌게 한다 */
 .startBlock {
@@ -236,40 +194,6 @@
 }
 
 .skipAsk:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.input {
-  width: 100%;
-  resize: none;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  /* iOS는 16px 미만이면 탭할 때 화면을 확대한다 — 그 뒤로 레이아웃이 어긋난 채로 남는다 */
-  font-size: 16px;
-  line-height: 1.5;
-  font-family: inherit;
-}
-
-.input::placeholder {
-  color: var(--text-muted);
-}
-
-.send {
-  height: 52px;
-  border: none;
-  border-radius: 16px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 15.5px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.send:disabled {
   opacity: 0.5;
   cursor: default;
 }

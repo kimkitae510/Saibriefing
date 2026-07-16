@@ -4,6 +4,7 @@ import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { GuestLinkPage } from './pages/GuestLinkPage';
 import { StoryEntryPage } from './pages/StoryEntryPage';
+import { NewStoryPage } from './pages/NewStoryPage';
 import { ChatPage } from './pages/ChatPage';
 import { AssessmentPage } from './pages/AssessmentPage';
 import { HistoryPage } from './pages/HistoryPage';
@@ -40,6 +41,8 @@ export default function App() {
       <Route path="/s/:token" element={<SharedResultPage />} />
       <Route path="/shared/:token" element={<SharedResultPage />} />
       <Route path="/stories" element={<StoryEntryPage />} />
+      {/* 새 이야기는 방을 먼저 만들지 않고 오프닝(문진)부터 — 문진은 사연 단위다 */}
+      <Route path="/stories/new" element={<NewStoryPage />} />
       <Route path="/stories/:storyId" element={<ChatRoute />} />
       <Route path="/stories/:storyId/assessment" element={<AssessmentPage />} />
       <Route path="/stories/:storyId/history" element={<HistoryPage />} />
