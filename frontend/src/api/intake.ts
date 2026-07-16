@@ -46,13 +46,24 @@ export type ClingReaction = 'CLUNG_FIRM' | 'CLUNG_WAVERED' | 'LITTLE' | 'NONE' |
 export type RepeatBreakupPattern = 'SAME_ISSUE' | 'DIFFERENT' | 'UNSURE' | 'OTHER';
 export type RepeatSeverity = 'MORE_FINAL' | 'SIMILAR' | 'LIGHTER' | 'UNSURE' | 'OTHER';
 export type PriorReunionPath = 'PARTNER_RETURNED' | 'I_HELD_ON' | 'DRIFTED_BACK' | 'UNSURE' | 'OTHER';
+export type PriorReunionGap =
+  | 'WITHIN_WEEK'
+  | 'WITHIN_MONTH'
+  | 'WITHIN_QUARTER'
+  | 'WITHIN_HALF_YEAR'
+  | 'LONGER'
+  | 'UNSURE'
+  | 'OTHER';
 export type LastActionBeforeCut = 'BEGGED' | 'ANGRY' | 'NORMAL' | 'UNKNOWN' | 'OTHER';
 export type SelfEndReason = 'IMPULSIVE' | 'WORN_OUT' | 'EXTERNAL' | 'TEST' | 'UNSURE' | 'OTHER';
 export type NewRelationOverlap = 'DURING' | 'RIGHT_AFTER' | 'LATER' | 'UNSURE' | 'OTHER';
+// 헤어짐인지 시간 갖기인지. 이 칸이 없으면 상담자가 첫 턴에 기간과 연락 규칙부터 되묻는다.
+export type RelationState = 'BROKEN_UP' | 'ON_BREAK' | 'UNCLEAR' | 'OTHER';
+// 아래 둘은 시간을 갖는 중일 때만 묻는 가지다.
+export type PausePlan = 'NONE_SET' | 'WITHIN_TWO_WEEKS' | 'ABOUT_A_MONTH' | 'LONGER' | 'UNSURE' | 'OTHER';
+export type PauseContactRule = 'NO_CONTACT' | 'FREE' | 'NOT_DISCUSSED' | 'UNSURE' | 'OTHER';
 
 export interface StoryIntake {
-  // 상담자가 대화에서 부르는 이름. 다른 칸처럼 비워둘 수 있고, 빈 문자열이 곧 안 적음이다.
-  callName: string;
   userAge: number | null;
   partnerAge: number | null;
   userGender: IntakeGender | null;
@@ -67,12 +78,16 @@ export interface StoryIntake {
   repeatBreakupPattern: RepeatBreakupPattern | null;
   repeatSeverity: RepeatSeverity | null;
   priorReunionPath: PriorReunionPath | null;
+  priorReunionGap: PriorReunionGap | null;
   lastActionBeforeCut: LastActionBeforeCut | null;
   selfEndReason: SelfEndReason | null;
   newRelationOverlap: NewRelationOverlap | null;
   partnerActions: PartnerAction[];
   contactPoints: ContactPoint[];
   otherAnswers: Record<string, string>;
+  relationState: RelationState | null;
+  pausePlan: PausePlan | null;
+  pauseContactRule: PauseContactRule | null;
 }
 
 export interface StoryIntakeResponse extends StoryIntake {
@@ -81,7 +96,6 @@ export interface StoryIntakeResponse extends StoryIntake {
 }
 
 export const EMPTY_INTAKE: StoryIntake = {
-  callName: '',
   userAge: null,
   partnerAge: null,
   userGender: null,
@@ -96,12 +110,16 @@ export const EMPTY_INTAKE: StoryIntake = {
   repeatBreakupPattern: null,
   repeatSeverity: null,
   priorReunionPath: null,
+  priorReunionGap: null,
   lastActionBeforeCut: null,
   selfEndReason: null,
   newRelationOverlap: null,
   partnerActions: [],
   contactPoints: [],
   otherAnswers: {},
+  relationState: null,
+  pausePlan: null,
+  pauseContactRule: null,
 };
 
 export async function getIntake(storyId: number): Promise<StoryIntakeResponse> {

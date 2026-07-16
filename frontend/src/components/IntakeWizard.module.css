@@ -1,94 +1,279 @@
-/* 홈 안에서만 쓰는 한 장짜리 질문 화면. 검은 바탕 한가운데 질문 하나만 놓고, 보기는
-   상자 없이 문장으로 세운다 — 상자가 사라지는 순간 폼이 아니라 말을 건 것이 된다.
-   폰트와 간격은 아직 임시다. 구조(가운데, 상자 없음, 즉시 넘어감)만 확정이다 */
+/* 문진 한 장. 새벽 세시에 폰을 든 사람에게 도구가 말을 거는 자리다.
+   원칙 셋: 한 화면에 한 질문. 색이 아니라 자리와 굵기가 상태를 말한다. 글씨체와 색과 모서리는
+   앱의 다른 화면(대화 입력칸, 리포트 카드)과 같은 것만 쓴다 — 오프닝만 다른 앱처럼 보이면 안 된다.
+   보기는 상자를 쌓지 않고 머리카락 선으로만 가른다. 상자를 쌓으면 설문지가 되고,
+   선으로만 가르면 대화의 선택지가 된다(게임의 대사 선택 목록이 그렇다). */
 .wrap {
   flex: 1;
   width: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
   position: relative;
-  padding: 36px 0 56px;
 }
 
-/* 남은 수는 구석에 작게. 대화 중에 크게 보이면 다시 폼이 된다 */
-.count {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  color: var(--text-muted);
-  font-size: 11px;
-  letter-spacing: 0.16em;
+/* 진행은 머리카락 선 하나가 차오르는 것. 숫자는 그 옆에 작게 — 크면 대화가 아니라 시험지다 */
+.top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-/* 말하는 쪽의 표시. 보라는 이 선과 고른 답, 두 군데에만 쓴다 */
-.mark {
-  width: 22px;
+.progress {
+  flex: 1;
   height: 1px;
-  background: var(--accent);
-  margin: 0 auto 24px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--text-sub);
+  transition: width 0.32s ease;
+}
+
+.count {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+/* 질문은 위쪽 삼분의 일에 선다. 위의 빈 공간이 곧 "들어온 공간"이다 — 채우지 않는다 */
+.head {
+  margin-top: 44px;
+}
+
+/* 장(두 사람, 이별, 지금, 상대) — 열두 질문이 한 줄로 이어지지 않고 네 장으로 읽히게.
+   되짚기 화면과 리포트가 같은 이름을 쓴다 */
+.section {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .ask {
   margin: 0;
   color: var(--text);
-  font-size: 23px;
-  font-weight: 600;
-  line-height: 1.5;
-  letter-spacing: -0.2px;
-  text-wrap: balance;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.5px;
   word-break: keep-all;
 }
 
 /* 왜 묻는지. 읽는 사람만 읽는다 */
 .why {
-  margin: 12px auto 0;
-  max-width: 26em;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.65;
+  margin: 10px 0 0;
+  color: var(--text-sub);
+  font-size: 14px;
+  line-height: 1.6;
   word-break: keep-all;
 }
 
 .body {
   width: 100%;
-  margin-top: 36px;
+  margin-top: 28px;
   display: flex;
-  justify-content: center;
-  gap: 22px;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  /* 아래 버튼 줄과 붙지 않게 */
+  padding-bottom: 8px;
 }
 
-/* 숫자 칸은 밑줄 하나. 상자를 없애는 규칙은 입력칸에도 적용된다 */
-.numberBox {
+/* 글이 뜨는 방식이 곧 "누가 말하고 있다"는 느낌이다. 질문이 먼저 오르고 보기가 뒤따라 오른다.
+   장식이 아니라 순서다 — 움직임을 끄는 설정에서는 그냥 선다 */
+.rise {
+  animation: rise 0.26s ease both;
+}
+
+.riseLate {
+  animation: rise 0.3s ease both;
+  animation-delay: 0.08s;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .riseLate {
+    animation: none;
+  }
+  .progressFill {
+    transition: none;
+  }
+}
+
+/* 보기 목록. 선으로만 가른다. 줄 높이 56은 손가락 기준 — 상자가 없으니 높이가 곧 표적이다.
+   고른 줄은 색으로 칠하지 않는다. 흰색을 아주 옅게 깔고 글이 밝아지고 오른쪽 끝에 얇은 체크가 선다 —
+   iOS 목록과 리니어의 선택 문법이고, 보라는 체크 한 획에만 든다 */
+.list {
+  width: 100%;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 0 2px;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.listOption {
+  width: 100%;
+  min-height: 56px;
+  padding: 16px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-sub);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.45;
+  font-family: inherit;
+  text-align: left;
+  word-break: keep-all;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: color 0.16s ease, background 0.16s ease;
+}
+
+.listOption:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.listOption:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.listOptionOn {
+  color: var(--text);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.check {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+/* 고른 뒤 나머지는 가라앉는다 — 넘어가기 전 반 박자 동안 무엇을 골랐는지가 보인다 */
+.listOptionDim {
+  color: var(--text-muted);
+}
+
+/* 옛 이름 — 둘짜리 보기도 이제 같은 목록이다 */
+.options {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.option {
+  width: 100%;
+  min-height: 56px;
+  padding: 16px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-sub);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.45;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: color 0.16s ease, background 0.16s ease;
+}
+
+.option:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.option:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.optionOn {
+  color: var(--text);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* 입력칸은 대화 입력칸과 같은 상자다 — 이 앱에서 글을 받는 칸은 늘 이 모양이다 */
+.numberBox,
+.textBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  height: 54px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.numberBox:focus-within,
+.textBox:focus-within {
+  border-color: var(--text-muted);
+}
+
+/* 목록 안의 기타 글 칸은 목록 아래에 조금 띄워 선다 */
+.list .textBox,
+.options .textBox {
+  margin-top: 12px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.row > * {
+  flex: 1;
+  min-width: 0;
 }
 
 .numberLabel {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
-.number {
-  width: 72px;
+.number,
+.text {
+  width: 100%;
+  min-width: 0;
   border: none;
-  border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text);
-  font-size: 20px;
+  /* iOS는 16px 미만이면 탭할 때 화면을 확대한다 */
+  font-size: 16px;
   font-family: inherit;
-  text-align: center;
-  padding: 6px 0;
+  padding: 0;
   outline: none;
 }
 
-.number:focus {
-  border-bottom-color: var(--accent);
+.number {
+  text-align: right;
 }
 
 .number::-webkit-outer-spin-button,
@@ -104,129 +289,101 @@
 
 .unit {
   color: var(--text-muted);
-  font-size: 13px;
-}
-
-.textBox {
-  display: flex;
-  justify-content: center;
-  width: 100%;
-}
-
-.text {
-  width: 220px;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  font-size: 19px;
-  font-family: inherit;
-  text-align: center;
-  padding: 6px 0;
-  outline: none;
-}
-
-.text:focus {
-  border-bottom-color: var(--accent);
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
 .text::placeholder {
   color: var(--text-muted);
 }
 
-/* 성별처럼 보기가 둘인 것은 가로로 나란히 */
-.options {
-  display: flex;
-  justify-content: center;
-  gap: 40px;
-}
-
-.option {
-  border: none;
-  background: transparent;
-  padding: 10px 4px;
-  color: var(--text-sub);
-  font-size: 17px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: color 0.2s ease;
-}
-
-.optionOn {
-  color: var(--accent);
-}
-
-/* 셋 이상은 세로 문장 목록. 줄 높이 48은 손가락 기준이다 — 상자가 없으니 높이가 곧 표적이다 */
-.list {
-  width: 100%;
+/* 경과 단계: 숫자 한 칸, 그 아래 단위. 단위는 줄이 아니라 칸의 일부라 작게 가로로 */
+.sinceRow {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
+  gap: 12px;
 }
 
-.listOption {
-  min-height: 48px;
-  border: none;
+.unitToggle {
+  display: flex;
+  gap: 6px;
+}
+
+.unitOption {
+  flex: 1;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
   background: transparent;
-  padding: 10px 8px;
   color: var(--text-sub);
-  font-size: 16px;
-  line-height: 1.4;
+  font-size: 14px;
   font-family: inherit;
-  text-align: center;
-  word-break: keep-all;
   cursor: pointer;
-  transition: color 0.2s ease;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
-.listOption:hover {
+.unitOption:hover {
   color: var(--text);
 }
 
-/* 보기가 많거나 문장이 길면 가운데 정렬이 읽기 나쁘다 — 그때만 왼쪽에 붙인다 */
-.listLeft .listOption {
-  text-align: left;
-  padding-left: 12px;
+/* .optionOn보다 뒤에 선언돼 이 규칙이 이긴다. 고른 단위도 색이 아니라 밝기다 —
+   선택 조각에 보라가 들면 그 순간 화면이 설문 도구가 된다 */
+.unitOption.optionOn {
+  border-color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-weight: 600;
 }
 
-.listOptionOn {
-  color: var(--accent);
-}
-
-.listOptionDim {
-  color: var(--text-muted);
-}
-
+/* 아래 줄. 되돌아가는 길은 글자, 나아가는 길은 답을 채웠을 때만 앱의 주 버튼(대화 보내기)이 된다.
+   고르는 질문은 누르면 넘어가니 여기는 건너뛰기만 남고, 글과 숫자를 받는 질문에서 다음이 선다 */
 .foot {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  margin-top: auto;
+  padding-top: 16px;
   display: flex;
-  justify-content: center;
-  gap: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-/* 나아가는 길과 되돌아가는 길을 같은 무게로 둔다. 고르면 알아서 넘어가니 "다음"은
-   숫자 칸과 기타와 복수 선택에서만 쓰이는 보조 길이다 */
-.next,
-.back {
+.back,
+.next {
   border: none;
   background: transparent;
-  padding: 8px;
+  padding: 12px 4px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 14px;
   font-family: inherit;
-  letter-spacing: 0.02em;
   cursor: pointer;
 }
 
-.next:hover,
-.back:hover {
+.back:hover,
+.next:hover {
   color: var(--text-sub);
 }
 
+/* 답을 채운 뒤의 다음은 면이 아니라 글자다 — 진행일 뿐이라 확정 버튼의 무게를 주지 않는다.
+   흰 굵은 글자 하나가 오른쪽에 서고, 누르면 잠깐 옅어진다 */
 .nextReady {
-  color: var(--text-sub);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.nextReady:hover {
+  color: var(--text);
+}
+
+.nextReady:active {
+  opacity: 0.6;
+}
+
+/* 이름처럼 반드시 받는 칸에서 비어 있는 동안의 다음 — 눌리지 않는다는 것만 옅기로 말한다 */
+.next:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.footSpacer {
+  flex: 1;
 }
