@@ -663,8 +663,8 @@
 
 .btnGhost {
   flex: 1;
-  height: 52px;
-  border-radius: 14px;
+  height: 48px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
@@ -673,13 +673,15 @@
   cursor: pointer;
 }
 
+/* 확정 버튼은 흰 면 — 앱 어디서나 같다. 검은 바탕에서 흰 면은 빛이라 도형으로 안 읽히고,
+   보라는 면에 칠하지 않고 보내기 점, 체크, 게이지처럼 획으로만 쓴다 */
 .btnPrimary {
   flex: 1.7;
-  height: 52px;
-  border-radius: 14px;
+  height: 48px;
+  border-radius: 12px;
   border: none;
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--text);
+  color: #111114;
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;

@@ -139,9 +139,9 @@
 .sheetAgree {
   height: 44px;
   border: none;
-  border-radius: 13px;
-  background: var(--accent);
-  color: var(--on-accent);
+  border-radius: 12px;
+  background: var(--text);
+  color: #111114;
   font-size: 14.5px;
   font-weight: 700;
   cursor: pointer;

@@ -169,9 +169,9 @@
   margin-top: 10px;
   padding: 10px 18px;
   border: none;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #1a1a1d;
+  border-radius: 12px;
+  background: var(--text);
+  color: #111114;
   font-size: 13.5px;
   font-weight: 700;
   cursor: pointer;

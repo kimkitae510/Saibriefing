@@ -67,15 +67,16 @@
 
 /* flex-shrink를 막지 않으면 항목이 많은 도움말(채팅)에서 다이얼로그가 max-height에 걸리는
    순간 이 버튼부터 눌려 납작해진다 — 같은 컴포넌트인데 화면마다 버튼 높이가 달라 보였다 */
+/* 닫기는 확정이 아니라 도구다 — 채우지 않고 선만 */
 .close {
   flex-shrink: 0;
   margin-top: 6px;
   height: 48px;
-  border: none;
-  border-radius: 14px;
-  background: var(--accent);
-  color: var(--on-accent);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }

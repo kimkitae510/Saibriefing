@@ -124,12 +124,12 @@
 
 .primary {
   margin-top: 18px;
-  height: 54px;
+  height: 48px;
   border: none;
-  border-radius: 14px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 16px;
+  border-radius: 12px;
+  background: var(--text);
+  color: #111114;
+  font-size: 15.5px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -559,9 +559,9 @@
 .sheetAgree {
   height: 44px;
   border: none;
-  border-radius: 13px;
-  background: var(--accent);
-  color: var(--on-accent);
+  border-radius: 12px;
+  background: var(--text);
+  color: #111114;
   font-size: 14.5px;
   font-weight: 700;
   cursor: pointer;
