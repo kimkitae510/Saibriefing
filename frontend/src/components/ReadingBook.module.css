@@ -199,6 +199,8 @@
   margin: 14px 2px 4px;
   font-size: 14px;
   line-height: 1.65;
+  white-space: pre-line; /* 판정 글은 문단이 있다 */
+  word-break: keep-all;
 }
 
 /* 정리표 — 게이지 아래. 이름 한 줄, 키워드 두 줄, 이유 한 줄. 상자와 색 없이 글줄과 여백만 */

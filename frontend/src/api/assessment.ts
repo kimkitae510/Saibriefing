@@ -163,7 +163,8 @@ export interface ReadingDecision {
     up: { keyword: string; para?: number | null; note?: string | null }[];
     down: { keyword: string; para?: number | null; note?: string | null }[];
     why: string;
-    types?: string[] | null; // 이 사연에 겹친 이별의 유형 한 줄씩 — 총평 아래, 옛 저장분은 없음
+    types?: string[] | null; // 재회 판독 카드 한 줄씩("기준: 상태 — 근거") — 총평 아래, 옛 저장분은 없음
+    boundary?: string | null; // 한 칸 더는 아닌 이유 — 경계 칸을 받던 저장분(90~91판)만, 지금은 반대 방향 카드가 대신
   } | null;
 }
 

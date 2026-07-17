@@ -170,7 +170,7 @@ const REASON_GROUPS: Record<
   VERY_LOW: {
     mainDir: 'DOWN',
     main: '재회 가능성을 매우 낮게 본 이유',
-    counter: '그래도 덧붙여 둘 것',
+    counter: '그래도 남아 있는 것. 등급을 뒤집지는 못한다',
   },
   LOW: {
     mainDir: 'DOWN',
@@ -190,7 +190,7 @@ const REASON_GROUPS: Record<
   VERY_HIGH: {
     mainDir: 'UP',
     main: '재회 가능성을 매우 높게 본 이유',
-    counter: '그래도 덧붙여 둘 것',
+    counter: '그래도 남아 있는 것. 등급을 흔들지는 못한다',
   },
 };
 
@@ -340,27 +340,41 @@ export function ReadingBook({
     };
     // 책갈피 카드 — 이름과 한 줄. 카드만 읽어도 무엇이 왜인지는 알고, 어떻게 그런지는 문단이
     // 맡는다(문단을 카드에 넣으면 분석이 두 번 읽힌다). 등급을 만든 문단의 카드가 맨 위.
-    const bookmarkCards = (title: string, items: { keyword: string; note?: string | null }[]) => {
+    const bookmarkCards = (
+      title: string,
+      items: { keyword: string; note?: string | null; pivot?: boolean | null }[],
+    ) => {
       if (!items?.length) return null;
-      const withBlock = items.map((it) => ({ it, block: essay?.find((b) => b.keyword === it.keyword) }));
-      const ordered = [...withBlock].sort((a, b) => Number(!!b.block?.pivot) - Number(!!a.block?.pivot));
+      // 핵심은 항목 자체의 표시(sol이 (핵심)을 붙인 것)거나, 키워드로 이어진 문단의 표시다
+      const withBlock = items.map((it) => {
+        const block = essay?.find((b) => b.keyword === it.keyword);
+        return { it, block, pivot: !!it.pivot || !!block?.pivot };
+      });
+      const ordered = [...withBlock].sort((a, b) => Number(b.pivot) - Number(a.pivot));
       return (
         <div className={styles.diagGroup}>
           <div className={styles.diagGroupLabel}>{title}</div>
-          {ordered.map(({ it, block }, i) => (
-            <div
-              key={i}
-              className={block
-                ? `${styles.verdictCard} ${styles.verdictCardClickable}`
-                : styles.verdictCard}
-              onClick={() => jumpTo(it.keyword)}
-            >
-              <div className={styles.verdictCardTitle}>
-                {it.keyword}{block?.pivot ? ' (핵심)' : ''}
+          {ordered.map(({ it, block, pivot }, i) => {
+            // 판독 카드는 "기준: 상태" 꼴 — 기준 이름을 작게 위에, 상태 한 줄을 제목으로. 옛 키워드 카드는 그대로.
+            const colon = it.keyword.indexOf(': ');
+            const name = colon > 0 ? it.keyword.slice(0, colon) : '';
+            const head = colon > 0 ? it.keyword.slice(colon + 2) : it.keyword;
+            return (
+              <div
+                key={i}
+                className={block
+                  ? `${styles.verdictCard} ${styles.verdictCardClickable}`
+                  : styles.verdictCard}
+                onClick={() => jumpTo(it.keyword)}
+              >
+                {name && <div className={styles.typeName}>{name}</div>}
+                <div className={styles.verdictCardTitle}>
+                  {head}{pivot ? ' (핵심)' : ''}
+                </div>
+                {it.note && <div className={styles.bookmarkNote}>{it.note}</div>}
               </div>
-              {it.note && <div className={styles.bookmarkNote}>{it.note}</div>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       );
     };
@@ -448,6 +462,15 @@ export function ReadingBook({
                   </div>
                 );
               })}
+            </div>
+          )}
+          {/* 한 칸 더는 아닌 이유 — 경계 칸을 받던 저장분(90~91판)만. 지금은 반대 방향 카드가 이 자리다 */}
+          {decision.summary?.boundary && (
+            <div className={styles.diagGroup}>
+              <div className={styles.diagGroupLabel}>{groups.counter}</div>
+              <div className={styles.typeLine}>
+                <div className={styles.typeResult}>{decision.summary.boundary}</div>
+              </div>
             </div>
           )}
           {decision.summary && bookmarkCards(
