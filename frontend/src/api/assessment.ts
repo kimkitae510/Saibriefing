@@ -213,9 +213,30 @@ export interface AssessmentResponse {
   reading?: ReadingView | null;
 }
 
-// 지금 대화를 근거로 새 분석을 실행한다(POST). INSUFFICIENT면 저장되지 않는다.
-export async function runAssessment(storyId: number): Promise<AssessmentResponse> {
-  const { data } = await api.post<AssessmentResponse>(`/api/stories/${storyId}/assessments`);
+// 분석 작업의 진행 상태. 분석(A)과 재회 판독(B)이 병렬로 돌고, result는 DONE일 때만 실린다.
+// jobId가 null이면 LLM 없이 사전 가드에서 끝난 판(발화 없음, 근거부족, 쿨다운) — result에 안내가 실린다.
+export type JobStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
+export type StepStatus = 'PENDING' | 'DONE' | 'FAILED';
+export interface AssessmentJobResponse {
+  jobId: number | null;
+  status: JobStatus;
+  analysisStatus: StepStatus | null;
+  judgementStatus: StepStatus | null;
+  error: string | null;
+  result: AssessmentResponse | null;
+}
+
+// 지금 대화를 근거로 새 분석 작업을 접수한다(POST, 202). 같은 사연의 작업이 돌고 있으면 그 작업을 돌려준다.
+export async function runAssessment(storyId: number): Promise<AssessmentJobResponse> {
+  const { data } = await api.post<AssessmentJobResponse>(`/api/stories/${storyId}/assessments`);
+  return data;
+}
+
+// 작업 상태 조회 — DONE이면 result에 판정, FAILED면 error에 사유.
+export async function getAssessmentJob(storyId: number, jobId: number): Promise<AssessmentJobResponse> {
+  const { data } = await api.get<AssessmentJobResponse>(
+    `/api/stories/${storyId}/assessments/jobs/${jobId}`,
+  );
   return data;
 }
 
@@ -226,13 +247,17 @@ export async function getAssessments(storyId: number): Promise<AssessmentRespons
 }
 
 // 분석이 도는 동안의 단계. DIAGNOSIS(판정) → READING(심층 판독) → DECISION(판 결정).
-export type AssessmentStage = 'DIAGNOSIS' | 'READING' | 'DECISION' | null;
+// 진행 중인 작업이 있는지 — 재진입 때 붙을 작업을 찾는다. 없으면 jobId=null.
+export interface AssessmentProgress {
+  stage: 'READING' | null;
+  jobId: number | null;
+  analysisStatus: StepStatus | null;
+  judgementStatus: StepStatus | null;
+}
 
-export async function getAssessmentProgress(storyId: number): Promise<AssessmentStage> {
-  const { data } = await api.get<{ stage: AssessmentStage }>(
-    `/api/stories/${storyId}/assessments/progress`,
-  );
-  return data.stage ?? null;
+export async function getAssessmentProgress(storyId: number): Promise<AssessmentProgress> {
+  const { data } = await api.get<AssessmentProgress>(`/api/stories/${storyId}/assessments/progress`);
+  return data;
 }
 
 // 재회 성공 잠금을 유저가 직접 번복한다(다시 헤어졌거나 분석이 오해했을 수 있음).

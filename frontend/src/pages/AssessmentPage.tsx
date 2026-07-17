@@ -8,6 +8,8 @@ import {
   confirmBreakup,
   getAssessments,
   runAssessment,
+  getAssessmentJob,
+  getAssessmentProgress,
   type AssessmentResponse,
 } from '../api/assessment';
 import { getPickedCases, pickCases, type PickedCases } from '../api/match';
@@ -96,11 +98,59 @@ function BackBar({ onBack, onHelp }: { onBack: () => void; onHelp?: () => void }
 // 새로고침으로 모듈까지 날아간 판은 백엔드 인플라이트 잠금이 이중 실행을 거른다.
 let inflightRun: { storyId: number; promise: Promise<AssessmentResponse> } | null = null;
 
-function startOrJoinRun(storyId: number): Promise<AssessmentResponse> {
+// 작업 폴링 간격. LLM 두 호출이 병렬로 수십 초라 2초면 결과가 늦게 보이지 않고 서버도 안 흔든다.
+const JOB_POLL_MS = 2000;
+// 한 번 붙어서 기다리는 상한. 이 뒤로는 화면이 묻기를 멈추고 "만드는 중, 나중에 열어보라"로 넘긴다.
+// 작업은 서버에서 계속 돌고 결과는 저장되니 놓치는 건 없다 — 화면이 3분을 넘겨 스피너만 도는 것이
+// 실패처럼 보이는 게 문제다. LLM 대기 상한(4분)보다 짧게 잡는다: 3분 넘게 도는 판은 어차피 드물고,
+// 그 판은 재진입해서 다시 붙으면 된다(진행 중 작업 조회가 그 자리를 잇는다).
+const JOB_POLL_MAX_MS = 180_000;
+
+// 폴링 상한에 걸린 것. 실패가 아니라 "아직 만드는 중"이라 오류 배너가 아니라 안내로 받는다.
+export class StillRunning extends Error {
+  constructor() {
+    super('still-running');
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// 작업이 끝날 때까지 상태를 묻는다. DONE이면 판정, FAILED면 사유를 오류로 던진다.
+// 화면이 내려가도 계속 돈다 — 모듈 스코프의 inflightRun에 붙어 재진입 때 그 약속에 다시 붙는다.
+async function pollJob(storyId: number, jobId: number): Promise<AssessmentResponse> {
+  const deadline = Date.now() + JOB_POLL_MAX_MS;
+  for (;;) {
+    await sleep(JOB_POLL_MS);
+    if (Date.now() > deadline) throw new StillRunning();
+    const job = await getAssessmentJob(storyId, jobId);
+    if (job.status === 'DONE') {
+      if (!job.result) throw new Error('분석은 끝났지만 결과를 받지 못했습니다.');
+      return job.result;
+    }
+    if (job.status === 'FAILED') {
+      throw new Error(job.error || '분석을 만들지 못했습니다.');
+    }
+  }
+}
+
+async function runToResult(storyId: number, jobId?: number): Promise<AssessmentResponse> {
+  if (jobId != null) return pollJob(storyId, jobId);
+  const job = await runAssessment(storyId);
+  // 사전 가드에서 끝난 판(작업 없음)은 안내가 result로 바로 온다.
+  if (job.jobId == null) {
+    if (!job.result) throw new Error(job.error || '분석을 시작하지 못했습니다.');
+    return job.result;
+  }
+  if (job.status === 'DONE' && job.result) return job.result;
+  return pollJob(storyId, job.jobId);
+}
+
+// jobId를 주면 새 작업을 접수하지 않고 그 작업에 붙는다(재진입, 새로고침).
+function startOrJoinRun(storyId: number, jobId?: number): Promise<AssessmentResponse> {
   if (inflightRun && inflightRun.storyId === storyId) {
     return inflightRun.promise;
   }
-  const run = { storyId, promise: runAssessment(storyId) };
+  const run = { storyId, promise: runToResult(storyId, jobId) };
   inflightRun = run;
   const clear = () => {
     if (inflightRun === run) inflightRun = null;
@@ -330,12 +380,12 @@ export function AssessmentPage() {
   }
 
   // 새 분석은 버튼으로만 실행한다 — 페이지 진입만으로 일일 쿼터가 닳지 않게.
-  async function diagnose() {
+  async function diagnose(joinJobId?: number) {
     setDiagnosing(true);
     setError('');
     setNoMessages(false); // 대화를 나누고 돌아왔을 수 있다 — 매 시도마다 다시 판단한다
     try {
-      const res = await startOrJoinRun(storyId);
+      const res = await startOrJoinRun(storyId, joinJobId);
       if (aliveRef.current) {
         // 이야기 부족(INSUFFICIENT)은 결과가 아니라 안내다 — 기존 결과는 그대로 두고
         // 사라지지 않는 안내 배너로 띄운다(저장도 안 되는 임시 응답이라 결과 자리를 차지하면 안 된다).
@@ -372,6 +422,14 @@ export function AssessmentPage() {
       // 소진(Q001)을 백엔드 문구("이용권을 채우거나...")로 그대로 띄우면 아래 상시 '충전하기'와
       // 구매 권유가 이중이 된다 — 배너는 상태만 알리고, 동선은 링크 하나를 가리킨다(채팅과 동일 패턴).
       if (aliveRef.current) {
+        if (e instanceof StillRunning) {
+          // 실패가 아니다 — 서버는 계속 만들고 있고 결과는 저장된다. 사라지는 배너가 아니라
+          // 남는 안내로 두고, 유저가 다시 열면 진행 중 작업 조회가 그 자리에 다시 붙는다.
+          setNotice('분석이 길어지고 있습니다. 결과는 저장되니 잠시 후 이 화면을 다시 열어 주세요.');
+          setRetryable(false);
+          setCooldown(0);
+          return;
+        }
         const code = extractErrorCode(e);
         // L001(생성 실패)은 사라지는 배너로 처리하지 않는다. 유저가 할 일이 '다시 시도'인데
         // 6초 뒤 배너가 사라지면 무엇을 눌러야 할지가 화면에서 없어진다 — 재시도 패널로 넘긴다.
@@ -426,6 +484,13 @@ export function AssessmentPage() {
     // 진행 중 표시가 복원되고, 끝나는 순간 결과가 그대로 이 화면에 실린다.
     if (inflightRun && inflightRun.storyId === storyId) {
       diagnose();
+    } else {
+      // 새로고침으로 모듈까지 날아간 판 — 서버에 돌고 있는 작업이 있으면 새 접수 없이 그 작업에 붙는다.
+      getAssessmentProgress(storyId)
+        .then((p) => {
+          if (aliveRef.current && p.jobId != null) diagnose(p.jobId);
+        })
+        .catch(() => {});
     }
     // 진입 시엔 저장된 최신 분석만 보여준다. LLM 호출 없음.
     getAssessments(storyId)
@@ -511,7 +576,7 @@ export function AssessmentPage() {
             : '이번 분석은 차감되지 않았습니다'}
         </div>
         {/* 실패 재시도는 같은 판이다 — 질문을 다시 묻지 않고 마지막 질문을 재사용한다 */}
-        <button className={styles.retryBtn} onClick={diagnose} disabled={cooldown > 0}>
+        <button className={styles.retryBtn} onClick={() => diagnose()} disabled={cooldown > 0}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
               d="M20 12a8 8 0 11-2.3-5.6M20 4v4h-4"
@@ -571,7 +636,7 @@ export function AssessmentPage() {
             <button className={styles.btnGhost} onClick={toChat}>
               대화로
             </button>
-            <button className={styles.btnPrimary} onClick={diagnose}>
+            <button className={styles.btnPrimary} onClick={() => diagnose()}>
               다시 분석 (1회 차감)
             </button>
           </div>
@@ -700,7 +765,7 @@ export function AssessmentPage() {
                   대화하러 가기
                 </button>
               ) : (
-                <button className={styles.btnPrimary} onClick={diagnose}>
+                <button className={styles.btnPrimary} onClick={() => diagnose()}>
                   분석 받기
                 </button>
               )}
@@ -763,7 +828,7 @@ export function AssessmentPage() {
               <button className={styles.btnGhost} onClick={toChat}>
                 대화로
               </button>
-              <button className={styles.btnPrimary} onClick={diagnose}>
+              <button className={styles.btnPrimary} onClick={() => diagnose()}>
                 다시 분석
               </button>
             </div>
@@ -1106,7 +1171,7 @@ export function AssessmentPage() {
           </button>
           {/* 쿨다운 중엔 여기서도 막는다 — 위 패널은 비활성인데 아래로 우회되면 서버만 거절하고
               화면은 왜 안 되는지 말해주지 않는 상태가 된다 */}
-          <button className={styles.btnPrimary} onClick={diagnose} disabled={cooldown > 0}>
+          <button className={styles.btnPrimary} onClick={() => diagnose()} disabled={cooldown > 0}>
             다시 분석 (1회 차감)
           </button>
         </div>
