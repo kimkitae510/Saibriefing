@@ -14,7 +14,6 @@ import {
   type MessageResponse,
 } from '../api/story';
 import { extractErrorCode, extractErrorMessage, extractRetryAfterSeconds } from '../api/client';
-import { getAssessments } from '../api/assessment';
 import { getUsage } from '../api/usage';
 import { formatClock, formatDateDivider, isSameCalendarDate } from '../utils/datetime';
 import styles from './ChatPage.module.css';
@@ -64,10 +63,6 @@ function renderEmphasis(line: string): ReactNode {
 export function ChatPage() {
   const { storyId: storyIdParam } = useParams();
   const storyId = Number(storyIdParam);
-  // 분석 안내를 이 방에서 이미 지나쳤는지. 키 이름을 바꾼 건 뜻이 바뀌어서다 —
-  // 예전 diagHintShown은 "띄웠다", 지금은 "유저가 넘어갔다"라 옛 값을 그대로 읽으면
-  // 넘어간 적 없는 방까지 막힌다. 옛 키는 아무도 안 읽으니 그대로 둔다.
-  const diagHintKey = `diagHintDone:${storyId}`;
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -90,27 +85,12 @@ export function ChatPage() {
   const [showDrawer, setShowDrawer] = useState(false);
   // 초상 파일이 없을 때 말풍선마다 깨진 이미지가 뜨지 않게 — 한 번 실패하면 전부 접는다
   const [hasAvatar, setHasAvatar] = useState(true);
-  // 분석 입구 안내 줄 — 헤더 버튼만으로는 분석이 있는 줄 모른 채 이탈하는 사람들이 있다
-  const [showDiagHint, setShowDiagHint] = useState(false);
   // 도착 카드가 여는 리포트 책. 화면 이동이 아니라 채팅 위에 펼친다 — 읽고 닫으면
   // 방금 하던 대화가 그 자리에 그대로 있어야 한다.
   const [showReportBook, setShowReportBook] = useState(false);
 
   // 기본 정보(나이, 성별, 기간)는 홈의 질문 단계에서 받는다. 여기서 안 받는 이유는 자리다 —
   // 사연을 다 쓰고 보내는 순간에 폼이 떨어지면, 털어놓은 사람에게 접수증을 내미는 꼴이 된다.
-
-  // 상담자가 물을 것을 다 들은 판. 마지막 답에 실려 온 목표 진행이 전체와 같아지면
-  // 리포트 입구를 세운다 — 상담자의 마무리 말 아래 카드가 놓이는 자리다.
-  const goalsComplete = (() => {
-    const last = messages[messages.length - 1];
-    return (
-      last != null &&
-      last.role !== 'USER' &&
-      last.goalsTotal != null &&
-      last.goalsTotal > 0 &&
-      last.goalsDone === last.goalsTotal
-    );
-  })();
 
   // 이름도 묶음의 첫 풍선 위에만. 프사와 같은 높이에서 시작해야 누구의 덩어리인지가 한눈에 잡힌다.
   function withName(show: boolean, bubble: React.ReactNode) {
@@ -301,36 +281,10 @@ export function ChatPage() {
     return () => clearTimeout(timer);
   }, [cooldown]);
 
-  // 완결 턴(답을 받은 턴) 1회부터 분석 입구를 안내한다 — 언제 리포트로 넘어갈지는 사연자가
-  // 정한다. 상담자가 물을 것을 다 들으면(goalsComplete) 카드가 따로 한 번 더 선다.
-  // 표시는 "띄운 순간"이 아니라 "유저가 넘어간 순간"에 남긴다(dismissDiagHint). 띄울 때 남기면
-  // 다른 방에 잠깐 갔다 오는 것만으로 사라진다 — 방을 나가면 이 화면이 죽으니 안내는 못 읽고
-  // 표시만 남는 꼴이다. 대신 아직 안 넘어간 방은 입장마다 이력 조회(GET)가 한 번 나간다.
-  // 이력이 있는 방은 그 자리에서 표시를 남겨 다음 입장부터 조회를 건너뛴다.
-  useEffect(() => {
-    if (showDiagHint) return;
-    const replied = messages.filter((m) => m.role !== 'USER' && !m.failed).length;
-    if (replied < 1) return;
-    if (localStorage.getItem(diagHintKey)) return;
-    getAssessments(storyId)
-      .then((all) => {
-        if (!aliveRef.current) return;
-        if (all.length === 0) setShowDiagHint(true);
-        else localStorage.setItem(diagHintKey, '1');
-      })
-      .catch(() => {}); // 부가 안내라 실패하면 조용히 안 띄운다
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages]);
-
-  // 안내를 내리고 이 방에서 다시 안 뜨게 못 박는다. 유저가 입구를 찾은 순간(버튼을 눌렀거나)
-  // 다음 말로 넘어간 순간에만 부른다.
-  // 떠 있을 때만 쓴다 — handleSend는 전송마다 이걸 부르므로, 안 떠 있어도 쓰면 유저의
-  // 첫 메시지가 표시를 남겨 안내가 영영 안 뜬다(조건이 갖춰지기도 전에 막힌다).
-  function dismissDiagHint() {
-    if (!showDiagHint) return;
-    localStorage.setItem(diagHintKey, '1');
-    setShowDiagHint(false);
-  }
+  // 리포트 입구는 상담자 답이 한 번이라도 붙은 뒤부터 대화 끝에 늘 선다. 리포트가 이 대화의 산출물이라
+  // 한 번 띄우고 치우는 안내가 아니다 — 새로고침이나 재입장으로 사라지면 유저가 입구를 잃는다.
+  // 언제 누를지는 사연자가 정한다(첫 사연만으로 눌러도 판독이 근거부족이면 그렇게 돌려보낸다).
+  const showDiagHint = messages.some((m) => m.role !== 'USER' && !m.failed);
 
   async function loadOlder() {
     if (cursor == null) return;
@@ -396,10 +350,6 @@ export function ChatPage() {
     try {
       const userMsg = await sendMessage(storyId, content);
       setMessages((prev) => [...prev, userMsg]);
-      // 유저가 다음 말을 시작했으면 안내는 할 일을 다 했다. 여기서 안 내리면 답을 기다리는
-      // 동안만 숨었다가 새 말풍선 아래로 다시 올라온다 — 한 번 뜨고 마는 줄이 턴마다 재등장한다.
-      // 보내기 성공에만 건다: 쿨다운으로 못 보낸 판은 유저가 넘어간 게 아니다.
-      dismissDiagHint();
       setWaiting(true);
       pollForReply(userMsg.id);
     } catch (e) {
@@ -674,38 +624,29 @@ export function ChatPage() {
               )}
               {/* 답이 다 도착한 숨 고르는 순간에만 — 타이핑 중에 끼어들면 대화를 가로챈다.
                   상담자 입으로 시키지 않고 화면의 시스템 줄이 맡는다(설명을 읽히는 순간
-                  상담이 도구가 된다는 인사 원칙과 같은 이유).
-                  물을 것을 다 들은 판(goalsComplete)은 넘어간 적이 있어도 다시 세운다 —
-                  상담자의 마무리 말 아래가 이 카드의 자리다 */}
-              {(showDiagHint || goalsComplete) && !waiting && reveal == null && (
+                  상담이 도구가 된다는 인사 원칙과 같은 이유) */}
+              {showDiagHint && !waiting && reveal == null && (
                 <div className={styles.diagHint}>
-                  {/* 도착 카드 — 누르면 화면 이동 없이 그 자리에서 책이 펼쳐진다(ReportBookSheet).
-                      "충분하다" 류의 단정은 안 쓴다 — 진단이 근거부족으로 돌려보내는 판이 있다.
-                      누른 순간 다음 입장부터 안 뜨게 못 박되(localStorage) 카드는 그대로 둔다 —
-                      책을 닫고 돌아온 자리에서 카드까지 사라지면 방금 누른 것이 없던 일이 된다 */}
+                  {/* 누르면 화면 이동 없이 그 자리에서 책이 펼쳐진다(ReportBookSheet).
+                      "충분하다" 류의 단정은 안 쓴다 — 진단이 근거부족으로 돌려보내는 판이 있다 */}
+                  {/* 리포트가 무엇인지 한 줄 — 산출물 나열보다 무엇을 재료로 무엇을 하는지가 먼저다 */}
+                  <div className={styles.diagHintLine}>지금까지의 대화로 재회 가능성과 그 이유, 지금 할 일을 정리합니다</div>
+                  {/* 아이콘은 헤더 분석 칩과 같은 펄스 — 이 줄은 한 번 뜨고 사라지므로,
+                      누르는 동안 "저 위에 있는 그것"이라는 연결이 남아야 다음부터 헤더로 간다 */}
                   <button
-                    className={styles.reportCard}
-                    onClick={() => {
-                      localStorage.setItem(diagHintKey, '1');
-                      setShowReportBook(true);
-                    }}
+                    className={styles.diagHintBtn}
+                    onClick={() => setShowReportBook(true)}
                   >
-                    <span className={styles.reportIcon}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path
-                          d="M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 006.5 22H20V2H6.5A2.5 2.5 0 004 4.5v15z"
-                          stroke="currentColor"
-                          strokeWidth="1.7"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
-                    <span className={styles.reportTexts}>
-                      <span className={styles.reportTitle}>분석 리포트가 도착했습니다</span>
-                      <span className={styles.reportSub}>이별 유형, 재회 가능성, 비슷한 사례</span>
-                    </span>
-                    <span className={styles.reportOpen}>펼쳐보기</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M3.5 12h4l2.5-6.5 4 13 2.5-6.5h4"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    분석 리포트 만들기
                   </button>
                 </div>
               )}
