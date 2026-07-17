@@ -35,22 +35,26 @@ const RESUME_WAIT_WINDOW = 180000;
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // 장문 답변을 말풍선으로 쪼갠다 — 사람이 나눠 보내는 것처럼.
-// 1차 경계는 '빈 줄'이다(모델이 묶은 의도 존중). 단 모델이 빈 줄 없이 문장 줄바꿈만으로
-// 보내는 답이 잦아 한 덩어리 풍선이 되는 실측이 있어, 빈 줄이 아예 없으면 줄 단위로
-// 폴백해 카톡처럼 나눈다. 저장은 한 덩어리라 재입장 시에도 똑같이 쪼개진다.
+// 풍선 경계는 '빈 줄'(모델이 문단으로 묶은 의도)이고, 그것뿐이다. 문장마다 풍선을 만들었더니
+// 세 문장이 풍선 셋으로 따닥따닥 왔다(실측). 문장은 풍선 안에서 줄로 나눈다(bubbleLines).
+// 저장은 한 덩어리라 재입장 시에도 똑같이 쪼개진다.
 function splitParagraphs(text: string): string[] {
   const parts = text
     .split(/\n{2,}/)
     .map((s) => s.trim())
     .filter(Boolean);
-  if (parts.length > 1) {
-    return parts;
-  }
-  const lines = text
+  return parts.length > 0 ? parts : [text];
+}
+
+// 풍선 하나 안의 줄. 모델이 줄을 바꾼 자리와 문장 끝(마침표, 물음표, 느낌표 뒤 공백)에서 나눈다 —
+// 한 문단에 세 문장이면 세 줄. 숫자 소수점은 뒤에 공백이 없어 안 잘린다.
+function bubbleLines(seg: string): string[] {
+  const lines = seg
     .split('\n')
+    .flatMap((line) => line.split(/(?<=[.?!])\s+/))
     .map((s) => s.trim())
     .filter(Boolean);
-  return lines.length > 0 ? lines : [text];
+  return lines.length > 0 ? lines : [seg];
 }
 
 // **로 감싼 구간만 굵게. 짝이 안 맞는 별표는 글자 그대로 둔다 — 모델 실수가 화면 깨짐이 되지 않게.
@@ -563,7 +567,7 @@ export function ChatPage() {
                           >
                             {/* 한 풍선 안 여러 문장은 줄만 바꾸면 바로 밑에 붙어 답답하다(실측) —
                               문장마다 블록으로 나눠 사이를 띄운다 */}
-                            {seg.split('\n').map((line, li) => (
+                            {(m.role === 'USER' ? seg.split('\n') : bubbleLines(seg)).map((line, li) => (
                               <div className={styles.bubbleLine} key={li}>
                                 {m.role === 'USER' ? line : renderEmphasis(line)}
                               </div>
