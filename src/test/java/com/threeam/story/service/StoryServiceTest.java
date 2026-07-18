@@ -3,6 +3,7 @@ package com.threeam.story.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -162,7 +163,7 @@ class StoryServiceTest {
         given(messageTxService.transcript(10L)).willReturn(transcript);
         GoalJudge.GoalState judged = new GoalJudge.GoalState(List.of(), List.of(goal("contact")), false);
         given(goalJudge.judge(10L, transcript, 1L)).willReturn(CompletableFuture.completedFuture(judged));
-        given(chatLlm.reply(anyList()))
+        given(chatLlm.reply(anyList(), anyBoolean()))
                 .willReturn(CompletableFuture.completedFuture("괜찮아요, 여기 있어요."));
         given(messageTxService.appendAssistantReply(10L, "괜찮아요, 여기 있어요."))
                 .willReturn(MessageResponse.from(message(2L, MessageRole.ASSISTANT, "괜찮아요, 여기 있어요.")));
@@ -174,7 +175,7 @@ class StoryServiceTest {
         assertThat(response.getContent()).isEqualTo("오늘 너무 힘들어");
         // 판정 결과가 프롬프트 조립으로 들어간다 — 방금 들어온 말이 무엇을 채웠는지 알아야 같은 것을 다시 안 묻는다
         verify(messageTxService).promptFor(10L, judged);
-        verify(chatLlm).reply(anyList());
+        verify(chatLlm).reply(anyList(), anyBoolean());
         // completedFuture라 콜백이 동기 실행 → 어시스턴트 저장까지 이뤄진다
         verify(messageTxService).appendAssistantReply(10L, "괜찮아요, 여기 있어요.");
         // 대화 회수는 세지 않는다 — 탐색 채팅은 리포트의 입력이라 턴마다 팔 물건이 아니다
@@ -196,7 +197,7 @@ class StoryServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.STORY_NOT_FOUND);
 
-        verify(chatLlm, never()).reply(anyList());
+        verify(chatLlm, never()).reply(anyList(), anyBoolean());
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
     }
 
@@ -212,7 +213,7 @@ class StoryServiceTest {
 
         // 접수 자체가 거부됐으니 메시지 저장도, LLM 호출도 없다
         verify(messageTxService, never()).appendUserMessage(any(), any(), any());
-        verify(chatLlm, never()).reply(anyList());
+        verify(chatLlm, never()).reply(anyList(), anyBoolean());
     }
 
     @Test
@@ -221,7 +222,7 @@ class StoryServiceTest {
         MessageResponse userMessage = MessageResponse.from(message(1L, MessageRole.USER, "hi"));
         given(messageTxService.appendUserMessage(1L, 10L, "hi"))
                 .willReturn(new MessageTxService.PreparedSend(userMessage, 1L));
-        given(chatLlm.reply(anyList()))
+        given(chatLlm.reply(anyList(), anyBoolean()))
                 .willReturn(CompletableFuture.failedFuture(new RuntimeException("LLM down")));
 
         storyService.sendMessage(1L, 10L, sendRequest("hi"));
@@ -241,7 +242,7 @@ class StoryServiceTest {
         MessageResponse userMessage = MessageResponse.from(message(1L, MessageRole.USER, "hi"));
         given(messageTxService.appendUserMessage(1L, 10L, "hi"))
                 .willReturn(new MessageTxService.PreparedSend(userMessage, 1L));
-        given(chatLlm.reply(anyList())).willReturn(CompletableFuture.completedFuture("들었어"));
+        given(chatLlm.reply(anyList(), anyBoolean())).willReturn(CompletableFuture.completedFuture("들었어"));
         given(messageTxService.appendAssistantReply(10L, "들었어"))
                 .willReturn(MessageResponse.from(message(2L, MessageRole.ASSISTANT, "들었어")));
 
@@ -263,7 +264,7 @@ class StoryServiceTest {
 
         // 유저 메시지도 저장하지 않는다 — 답이 붙지 않을 말풍선만 남으면 폴링이 헛돈다
         verify(messageTxService, never()).appendUserMessage(any(), any(), any());
-        verify(chatLlm, never()).reply(anyList());
+        verify(chatLlm, never()).reply(anyList(), anyBoolean());
         verify(usageLimiter).releaseInFlight(UsageKind.CHAT, 1L);
     }
 
@@ -273,7 +274,7 @@ class StoryServiceTest {
     void openConversation() {
         given(messageTxService.hasAnyMessage(1L, 10L)).willReturn(false);
         given(messageTxService.appendScriptedOpening(10L)).willReturn(false);
-        given(chatLlm.reply(anyList())).willReturn(CompletableFuture.completedFuture("무슨 일이 있었나요"));
+        given(chatLlm.reply(anyList(), anyBoolean())).willReturn(CompletableFuture.completedFuture("무슨 일이 있었나요"));
         given(messageTxService.appendAssistantReply(10L, "무슨 일이 있었나요"))
                 .willReturn(MessageResponse.from(message(1L, MessageRole.ASSISTANT, "무슨 일이 있었나요")));
 
@@ -301,7 +302,7 @@ class StoryServiceTest {
     void retryLastReply_success() {
         given(messageTxService.prepareRetry(1L, 10L))
                 .willReturn(new MessageTxService.PreparedRetry(7L, "오늘 너무 힘들어"));
-        given(chatLlm.reply(anyList())).willReturn(CompletableFuture.completedFuture("들었어"));
+        given(chatLlm.reply(anyList(), anyBoolean())).willReturn(CompletableFuture.completedFuture("들었어"));
         given(messageTxService.appendAssistantReply(10L, "들었어"))
                 .willReturn(MessageResponse.from(message(9L, MessageRole.ASSISTANT, "들었어")));
 
@@ -326,7 +327,7 @@ class StoryServiceTest {
                 .hasFieldOrPropertyWithValue("retryAfterSeconds", 30);
 
         verify(messageTxService, never()).prepareRetry(any(), any());
-        verify(chatLlm, never()).reply(anyList());
+        verify(chatLlm, never()).reply(anyList(), anyBoolean());
     }
 
     @Test

@@ -81,14 +81,17 @@ public class AnthropicMessagesClient {
                 .whenComplete((result, ex) -> countCall(call, ex));
     }
 
-    // 탐색 채팅 답(산문). 실패하면 예외로 끝나고, 다른 경로로 넘기는 판단은 ChatLlm이 한다.
-    public CompletableFuture<String> generateChatText(List<ChatMessage> messages) {
-        if (!properties.chatEnabled()) {
+    // 탐색 채팅 답(산문). deep이면 긴 메시지 모델로. 실패하면 예외로 끝나고 다른 모델로 넘기지 않는다.
+    public CompletableFuture<String> generateChatText(List<ChatMessage> messages, boolean deep) {
+        if (deep ? !properties.chatDeepEnabled() : !properties.chatEnabled()) {
             return CompletableFuture.failedFuture(
                     new IllegalStateException("anthropic 채팅 모델이나 키가 비어 있다 — 채팅 프로바이더 설정 확인"));
         }
-        Call call = new Call("채팅", properties.getChatModel(), CHAT_MAX_TOKENS,
-                properties.getChatEffort(), properties.getChatTimeoutSeconds());
+        Call call = deep
+                ? new Call("채팅", properties.getChatDeepModel(), CHAT_MAX_TOKENS,
+                        properties.getChatDeepEffort(), properties.getChatTimeoutSeconds())
+                : new Call("채팅", properties.getChatModel(), CHAT_MAX_TOKENS,
+                        properties.getChatEffort(), properties.getChatTimeoutSeconds());
         return send(call, messages, null)
                 .thenApply(response -> readStream(call, response))
                 .whenComplete((result, ex) -> countCall(call, ex));

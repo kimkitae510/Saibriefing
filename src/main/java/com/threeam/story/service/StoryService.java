@@ -173,7 +173,8 @@ public class StoryService {
                     long userTurns = transcript.stream()
                             .filter(m -> m.getRole() == MessageRole.USER).count();
                     return goalJudge.judge(storyId, transcript, userTurns)
-                            .thenCompose(goals -> chatLlm.reply(messageTxService.promptFor(storyId, goals)));
+                            .thenCompose(goals -> chatLlm.reply(
+                                    messageTxService.promptFor(storyId, goals), userTurns == 1));
                 }, llmCallbackExecutor)
                 .handleAsync((reply, ex) -> {
                     if (ex != null) {

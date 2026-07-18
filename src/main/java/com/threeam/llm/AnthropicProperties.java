@@ -37,8 +37,23 @@ public class AnthropicProperties {
 
     private long chatTimeoutSeconds = 30;
 
+    // 긴 메시지만 받는 채팅 모델(예: Sonnet). 장면이 여럿 엮인 메시지에서 뭘 짚을지 고르는 건
+    // 기본 모델이 자주 빗나가고, 질문에 답한 짧은 메시지는 기본 모델도 비슷하게 받는다(실측).
+    // 비우면 전부 기본 채팅 모델로 간다.
+    private String chatDeepModel = "";
+
+    private String chatDeepEffort = "low";
+
+    // 이 글자 수(공백 포함) 이상인 메시지만 긴 메시지 모델로 보낸다. 한 칸 내릴 때마다
+    // 비싼 모델 비율이 올라 대화당 비용이 바로 붙는다 — 실제 길이 분포를 보고 조정한다.
+    private int chatDeepMinChars = 100;
+
     public boolean chatEnabled() {
         return chatModel != null && !chatModel.isBlank() && apiKey != null && !apiKey.isBlank();
+    }
+
+    public boolean chatDeepEnabled() {
+        return chatEnabled() && chatDeepModel != null && !chatDeepModel.isBlank();
     }
 
     // 0이면 위 표에서 모델에 맞는 값을 쓴다. 값을 넣으면 표를 무시하고 그 값이 이긴다
