@@ -96,6 +96,18 @@ public class AnthropicMessagesClient {
 
     // 호출마다 달라지는 것만 묶는다. effort가 null이면 모델 기본값.
     private record Call(String kind, String model, int maxTokens, String effort, long timeoutSeconds) {
+
+        boolean chat() {
+            return "채팅".equals(kind);
+        }
+    }
+
+    // 채팅은 1시간 캐시. 긴 메시지 모델은 띄엄띄엄 불려서 5분이면 다음 차례 전에 대부분 만료되고,
+    // 사연자가 쓰다 멈추는 일도 잦다. 판독은 한 번 부르고 끝이라 저장값이 싼 5분으로 둔다.
+    private static Map<String, Object> cacheControl(Call call) {
+        return call.chat()
+                ? Map.of("type", "ephemeral", "ttl", "1h")
+                : Map.of("type", "ephemeral");
     }
 
     // 태그 키는 다른 클라이언트의 llm.calls와 같아야 한다 — Prometheus는 키가 다른 같은 이름을 거부한다.
@@ -183,6 +195,19 @@ public class AnthropicMessagesClient {
             }
         }
 
+        Map<String, Object> cache = cacheControl(call);
+        // 채팅은 마지막 메시지에도 캐시 표시 — 다음 턴이 여기까지의 대화를 캐시에서 읽고
+        // 새로 붙은 메시지만 정가로 낸다. 없으면 대화가 길어질수록 앞 대화를 매번 정가로 다시 읽는다.
+        if (call.chat() && !turns.isEmpty()) {
+            Map<String, Object> last = turns.remove(turns.size() - 1);
+            turns.add(Map.of(
+                    "role", last.get("role"),
+                    "content", List.of(Map.of(
+                            "type", "text",
+                            "text", last.get("content"),
+                            "cache_control", cache))));
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", call.model());
         body.put("max_tokens", call.maxTokens());
@@ -192,7 +217,7 @@ public class AnthropicMessagesClient {
         body.put("system", List.of(Map.of(
                 "type", "text",
                 "text", system.toString(),
-                "cache_control", Map.of("type", "ephemeral"))));
+                "cache_control", cache)));
         body.put("messages", turns);
         Map<String, Object> outputConfig = new LinkedHashMap<>();
         if (schema != null) {
@@ -305,8 +330,10 @@ public class AnthropicMessagesClient {
     // 호출당 실제 토큰과 추정 비용을 남긴다 — "실제 얼마 나가는지"는 이 실측 로그와 콘솔 청구서로 본다.
     private void logUsage(Call call, long[] tokens) {
         double[] price = properties.effectivePrices(call.model());
+        // 표의 캐시생성 단가는 5분 기준(입력의 1.25배). 1시간 캐시는 입력의 2배다.
+        double cacheWrite = call.chat() && properties.getPriceCacheWrite() <= 0 ? price[0] * 2 : price[2];
         double usd = (tokens[0] * price[0] + tokens[1] * price[1]
-                + tokens[2] * price[2] + tokens[3] * price[3]) / 1_000_000;
+                + tokens[2] * cacheWrite + tokens[3] * price[3]) / 1_000_000;
         if (usd == 0) {
             log.info("anthropic[{} {}] 토큰: 신규입력 {} / 캐시읽기 {} / 캐시생성 {} / 출력+추론 {} — 단가 미설정",
                     call.kind(), call.model(), tokens[0], tokens[1], tokens[2], tokens[3]);
