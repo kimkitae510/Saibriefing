@@ -35,7 +35,9 @@ public class PaymentProperties {
         private String clientKey = "";
         private String secretKey = "";
         private String baseUrl = "https://api.tosspayments.com/v1";
-        private long timeoutSeconds = 30;
+        // 승인 응답 대기. 토스 권장값 60초 — 우리가 먼저 끊어도 토스는 승인을 끝까지 처리해서
+        // 짧게 끊으면 결과 모름만 늘고, 재동기화가 조회로 확정할 때까지 유저가 기다린다.
+        private long timeoutSeconds = 60;
     }
 
     @Getter
