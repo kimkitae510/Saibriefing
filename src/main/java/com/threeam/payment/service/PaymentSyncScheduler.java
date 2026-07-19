@@ -6,8 +6,12 @@ import com.threeam.payment.entity.PaymentStatus;
 import com.threeam.payment.repository.PaymentRepository;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -38,8 +42,9 @@ public class PaymentSyncScheduler {
         LocalDateTime now = LocalDateTime.now();
         expireAbandonedOrders(now);
         LocalDateTime staleBefore = now.minusMinutes(properties.getSyncAfterMinutes());
-        syncEach(paymentRepository.findTop20ByStatusAndUpdatedAtBefore(PaymentStatus.IN_PROGRESS, staleBefore));
-        syncEach(paymentRepository.findTop20ByStatusAndUpdatedAtBefore(PaymentStatus.CANCEL_REQUESTED, staleBefore));
+        Pageable oldestFirst = PageRequest.of(0, properties.getSyncBatchSize(), Sort.by("updatedAt"));
+        syncEach(paymentRepository.findByStatusAndUpdatedAtBefore(PaymentStatus.IN_PROGRESS, staleBefore, oldestFirst));
+        syncEach(paymentRepository.findByStatusAndUpdatedAtBefore(PaymentStatus.CANCEL_REQUESTED, staleBefore, oldestFirst));
         // 입금 기한이 지난 가상계좌: 입금됐는데 웹훅이 유실됐을 수도, 그냥 만료일 수도 — 조회로 확정.
         syncEach(paymentRepository.findTop20ByStatusAndVbankDueAtBefore(PaymentStatus.WAITING_FOR_DEPOSIT, now));
         recheckExpiredWithLiveTransaction(now);
@@ -77,15 +82,33 @@ public class PaymentSyncScheduler {
         }
     }
 
+    // syncConcurrency개씩 묶어 동시에 묻고 묶음이 끝나면 다음 묶음으로 간다. 하나씩 기다리면 PG가 느릴 때
+    // 한 주기가 건수 × 응답 대기로 늘어나고, 전부 한꺼번에 쏘면 이미 느린 PG에 조회를 몰아 준다.
     private void syncEach(List<Payment> payments) {
-        for (Payment payment : payments) {
-            try {
-                paymentService.syncByOrderId(payment.getOrderId()).join();
-                log.info("결제 재동기화 orderId={} 이전상태={}", payment.getOrderId(), payment.getStatus());
-            } catch (RuntimeException e) {
-                // 한 건의 실패가 나머지 동기화를 막지 않게 한다. 다음 주기에 다시 시도된다.
-                log.error("결제 재동기화 실패 orderId={}", payment.getOrderId(), e);
-            }
+        int concurrency = Math.max(1, properties.getSyncConcurrency());
+        for (int from = 0; from < payments.size(); from += concurrency) {
+            List<Payment> group = payments.subList(from, Math.min(from + concurrency, payments.size()));
+            CompletableFuture.allOf(group.stream()
+                    .map(this::syncQuietly)
+                    .toArray(CompletableFuture[]::new)).join();
+        }
+    }
+
+    // 한 건의 실패가 나머지 동기화를 막지 않게 한다. 다음 주기에 다시 시도된다.
+    private CompletableFuture<Void> syncQuietly(Payment payment) {
+        try {
+            return paymentService.syncByOrderId(payment.getOrderId())
+                    .handle((ignored, ex) -> {
+                        if (ex == null) {
+                            log.info("결제 재동기화 orderId={} 이전상태={}", payment.getOrderId(), payment.getStatus());
+                        } else {
+                            log.error("결제 재동기화 실패 orderId={}", payment.getOrderId(), ex);
+                        }
+                        return null;
+                    });
+        } catch (RuntimeException e) {
+            log.error("결제 재동기화 실패 orderId={}", payment.getOrderId(), e);
+            return CompletableFuture.completedFuture(null);
         }
     }
 }

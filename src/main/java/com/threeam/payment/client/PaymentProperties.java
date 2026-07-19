@@ -24,6 +24,12 @@ public class PaymentProperties {
     // 너무 짧으면 정상 진행 중인 승인과 경합하고, 너무 길면 유저가 "돈 나갔는데 지급이 없다"를 오래 본다.
     private int syncAfterMinutes = 2;
 
+    // 재동기화 한 주기에 상태별로 집는 건수와, 그중 동시에 PG에 묻는 수. 주기가 60초라 해소율은
+    // 대략 건수 ÷ 60초다 — 20건이면 미확정 1,000건이 다 풀리는 데 50분, 100건이면 10분.
+    // 한꺼번에 다 쏘면 느린 PG에 조회가 몰리고, 하나씩 기다리면 PG가 느릴 때 한 주기가 건수 × 응답 대기로 늘어난다.
+    private int syncBatchSize = 100;
+    private int syncConcurrency = 10;
+
     // 유저당 미결(READY) 주문 상한. 결제까지 안 가는 주문 생성 도배로 테이블이 부푸는 것을 막는다.
     // 정상 유저는 위젯을 띄우면 바로 결제하거나 30분 뒤 만료되므로 이 수에 닿을 일이 없다.
     private int maxPendingOrdersPerUser = 5;

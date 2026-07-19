@@ -254,6 +254,8 @@ payment:
       BUNDLE_STANDARD: ${PADDLE_PRICE_BUNDLE_STANDARD:}
   order-expire-minutes: 30        # READY로 방치된 주문의 만료 기준
   sync-after-minutes: 2           # 승인/취소 응답 불명 상태를 재동기화하기까지의 대기
+  sync-batch-size: 100            # 재동기화 한 주기(60초)에 상태별로 집는 건수, 가장 오래 기다린 결제부터
+  sync-concurrency: 10            # 그중 동시에 PG에 묻는 수(느린 PG에 조회를 몰지 않게)
   max-pending-orders-per-user: 5  # 유저당 미결(READY) 주문 상한(주문 생성 도배 방어)
   webhook-response-budget-millis: 5000  # 웹훅이 PG 재조회를 기다려 주는 상한(토스 재전송 기한 10초보다 짧게)
 

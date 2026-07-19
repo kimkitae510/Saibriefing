@@ -6,6 +6,7 @@ import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -66,8 +67,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             """, nativeQuery = true)
     int transition(@Param("orderId") String orderId, @Param("from") String from, @Param("to") String to);
 
-    // 재동기화 대상 조회. 배치당 상한을 둬 스케줄 한 턴이 무한정 길어지지 않게 한다.
-    List<Payment> findTop20ByStatusAndUpdatedAtBefore(PaymentStatus status, LocalDateTime before);
+    // 재동기화 대상 조회. 배치당 상한을 둬 스케줄 한 턴이 무한정 길어지지 않게 하고, 정렬을 받아
+    // 적체가 상한을 넘을 때 가장 오래 기다린 결제부터 풀리게 한다(정렬이 없으면 순서는 인덱스 운에 맡겨진다).
+    List<Payment> findByStatusAndUpdatedAtBefore(PaymentStatus status, LocalDateTime before, Pageable pageable);
 
     List<Payment> findTop20ByStatusAndCreatedAtBefore(PaymentStatus status, LocalDateTime before);
 
