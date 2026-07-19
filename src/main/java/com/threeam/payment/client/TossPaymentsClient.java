@@ -4,16 +4,22 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.threeam.payment.entity.PaymentItem;
+import io.micrometer.core.instrument.Metrics;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.Base64;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -30,6 +36,14 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(name = "payment.provider", havingValue = "toss")
 public class TossPaymentsClient implements PaymentGateway {
+
+    // 응답이 끊긴 승인을 같은 키로 다시 묻기 전의 대기. 끊긴 직후 바로 붙으면 같은 순간 단절에 또 걸리기 쉽다.
+    private static final long RESEND_DELAY_MILLIS = 300;
+
+    // 거절이 아니라 "같은 키의 승인을 처리 중이거나 이미 처리했다"는 응답. FAILED로 적으면 승인된 결제를
+    // 실패로 남기게 되므로 불명으로 넘겨 재동기화가 조회로 확정하게 한다.
+    private static final Set<String> CONFIRM_IN_DOUBT_CODES =
+            Set.of("IDEMPOTENT_REQUEST_PROCESSING", "ALREADY_PROCESSED_PAYMENT");
 
     private final PaymentProperties properties;
     private final ObjectMapper objectMapper;
@@ -56,10 +70,42 @@ public class TossPaymentsClient implements PaymentGateway {
                 .put("orderId", orderId)
                 .put("amount", amount);
         HttpRequest request = baseRequest("/payments/confirm")
+                // 주문 하나에 승인은 한 번(claimConfirm 선점)이라 키를 주문번호에서 만든다. 재전송이 같은 키를
+                // 실어야 토스가 새 승인으로 처리하지 않고 첫 승인의 결과를 돌려준다.
+                .header("Idempotency-Key", confirmIdempotencyKey(orderId))
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
         // 승인 4xx = 카드 한도, 잔액 부족 등 확실한 거절. 사유를 남기고 FAILED로 확정한다.
-        return send(request, node -> rejected(paymentKey, orderId, node));
+        Function<JsonNode, PgPaymentResult> on4xx = node -> confirmRejected(paymentKey, orderId, node);
+        return send(request, on4xx)
+                .exceptionallyCompose(ex -> resendIfResponseLost(ex, request, on4xx, orderId));
+    }
+
+    static String confirmIdempotencyKey(String orderId) {
+        return orderId + "-confirm";
+    }
+
+    // 응답만 잃은 승인(연결 끊김)은 같은 키로 한 번 더 물어 그 자리에서 확정한다. 느려서 끊긴(타임아웃)
+    // 승인은 다시 보내지 않는다 — 토스는 아직 처리 중이라 재전송도 처리 중 응답만 받고, 느린 PG에 호출만 얹는다.
+    private CompletableFuture<PgPaymentResult> resendIfResponseLost(
+            Throwable ex, HttpRequest request, Function<JsonNode, PgPaymentResult> on4xx, String orderId) {
+        Throwable cause = ex instanceof CompletionException && ex.getCause() != null ? ex.getCause() : ex;
+        if (!(cause instanceof IOException) || cause instanceof HttpTimeoutException) {
+            return CompletableFuture.failedFuture(cause);
+        }
+        log.warn("토스 승인 응답 유실 — 같은 멱등키로 1회 재전송 orderId={} cause={}", orderId, cause.toString());
+        Metrics.counter("payment.confirm.resend").increment();
+        return CompletableFuture.supplyAsync(() -> null,
+                        CompletableFuture.delayedExecutor(RESEND_DELAY_MILLIS, TimeUnit.MILLISECONDS))
+                .thenCompose(ignored -> send(request, on4xx));
+    }
+
+    private PgPaymentResult confirmRejected(String paymentKey, String orderId, JsonNode errorBody) {
+        String code = errorBody.path("code").asText("");
+        if (CONFIRM_IN_DOUBT_CODES.contains(code)) {
+            throw new PaymentGatewayException("토스 승인 결과 미확정: " + code);
+        }
+        return rejected(paymentKey, orderId, errorBody);
     }
 
     @Override
