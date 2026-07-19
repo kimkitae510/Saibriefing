@@ -73,6 +73,10 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     List<Payment> findTop20ByStatusAndVbankDueAtBefore(PaymentStatus status, LocalDateTime before);
 
+    // 결과를 모르는 상태로 가장 오래 머문 결제가 그 상태에 들어온 시각(전이 쿼리가 updated_at을 찍는다).
+    @Query("select min(p.updatedAt) from Payment p where p.status in :statuses")
+    LocalDateTime oldestUpdatedAtIn(@Param("statuses") List<PaymentStatus> statuses);
+
     // 만료 처리했지만 PG 쪽 거래가 실재했던 주문. 그 결제창은 우리 만료와 무관하게 살아 있어
     // 뒤늦게 결제될 수 있다 — 웹훅이 유실된 경우를 대비해 생성 후 하루 동안만 다시 확인한다.
     // 상한을 생성 시각으로 거는 이유: 확인할 때마다 updated_at을 갱신(touch)해 재확인 간격을
