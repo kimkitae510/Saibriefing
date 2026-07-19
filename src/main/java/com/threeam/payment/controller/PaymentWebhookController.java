@@ -3,9 +3,11 @@ package com.threeam.payment.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.threeam.payment.client.PaddleSignatureVerifier;
+import com.threeam.payment.client.PaymentProperties;
 import com.threeam.payment.service.PaymentService;
 import com.threeam.payment.service.WebhookRateLimiter;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -29,6 +31,7 @@ public class PaymentWebhookController {
     private final WebhookRateLimiter webhookRateLimiter;
     private final PaddleSignatureVerifier signatureVerifier;
     private final ObjectMapper objectMapper;
+    private final PaymentProperties properties;
 
     @PostMapping("/toss")
     public CompletableFuture<ResponseEntity<Void>> toss(@RequestBody JsonNode payload) {
@@ -45,9 +48,7 @@ public class PaymentWebhookController {
             return CompletableFuture.completedFuture(ResponseEntity.ok().build());
         }
         // 논블로킹 — 웹훅이 몰려도 서블릿 스레드를 PG 조회 시간만큼 잡아두지 않는다.
-        // 실패하면 500으로 떨어져 토스가 재전송한다(재동기화 스케줄러도 뒤를 받친다).
-        return paymentService.syncByOrderId(orderId)
-                .thenApply(ignored -> ResponseEntity.ok().build());
+        return syncWithinBudget(orderId);
     }
 
     // 패들은 결제창에서 결제가 끝나버려 이 웹훅이 지급의 주 경로다(프론트가 결과를 못 알리고
@@ -86,7 +87,22 @@ public class PaymentWebhookController {
         if (!webhookRateLimiter.allow(orderId)) {
             return CompletableFuture.completedFuture(ResponseEntity.ok().build());
         }
-        return paymentService.syncByOrderId(orderId)
-                .thenApply(ignored -> ResponseEntity.ok().build());
+        return syncWithinBudget(orderId);
+    }
+
+    // PG 재조회가 응답 기한 안에 끝나면 그 결과로 답한다 — 실패면 500이라 PG가 재전송한다.
+    // 못 끝나면 200을 먼저 돌려주고 조회는 뒤에서 계속한다. PG가 느린 바로 그때 응답까지 늦으면
+    // 기한을 넘긴 웹훅이 재전송돼 같은 조회가 겹쳐 쌓인다. 늦게 실패한 조회는 불명 상태면 재동기화가,
+    // 입금 대기면 입금 기한 뒤 확인이 받친다.
+    private CompletableFuture<ResponseEntity<Void>> syncWithinBudget(String orderId) {
+        CompletableFuture<Void> sync = paymentService.syncByOrderId(orderId);
+        sync.whenComplete((ignored, ex) -> {
+            if (ex != null) {
+                log.error("웹훅 PG 재조회 실패 orderId={}", orderId, ex);
+            }
+        });
+        return sync.thenApply(ignored -> ResponseEntity.ok().<Void>build())
+                .completeOnTimeout(ResponseEntity.ok().build(),
+                        properties.getWebhookResponseBudgetMillis(), TimeUnit.MILLISECONDS);
     }
 }

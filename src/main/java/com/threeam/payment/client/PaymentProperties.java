@@ -28,6 +28,10 @@ public class PaymentProperties {
     // 정상 유저는 위젯을 띄우면 바로 결제하거나 30분 뒤 만료되므로 이 수에 닿을 일이 없다.
     private int maxPendingOrdersPerUser = 5;
 
+    // 웹훅이 PG 재조회를 기다려 주는 최대 시간. 넘기면 200을 먼저 돌려주고 조회는 뒤에서 계속한다.
+    // 토스는 10초 안에 2xx를 못 받으면 재전송하므로 네트워크 몫을 빼고 넉넉히 짧게 잡는다.
+    private long webhookResponseBudgetMillis = 5000;
+
     @Getter
     @Setter
     public static class Toss {
