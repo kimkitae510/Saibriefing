@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 730" width="1040" height="730" role="img" aria-labelledby="title desc">
+  <title id="title">사이브리핑 서버 구성</title>
+  <desc id="desc">사용자 요청은 OCI의 ARM 앱 서버 한 대에서 nginx를 거쳐 127.0.0.1:8080의 Spring Boot로 가고, Spring Boot는 사설 IP로 관리형 MySQL HeatWave에, HTTPS로 LLM API와 카카오 OAuth에 붙는다. Grafana Alloy가 앱, 서버, DB 지표와 로그를 Grafana Cloud로 보내고, Grafana Synthetics가 서울과 도쿄에서 헬스체크를 돌린다. 알림은 Discord와 이메일로 간다.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .zone { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .vm { fill: #ffffff; stroke: #64748b; stroke-width: 1.5; }
+    .card { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+    .card-in { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.2; }
+    .chip { fill: #eff6ff; stroke: #bfdbfe; stroke-width: 1; }
+    .chip-tel { fill: #faf5ff; stroke: #c084fc; stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .t1 { font: 600 18px Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Segoe UI', sans-serif; fill: #0f172a; }
+    .t2 { font: 400 15px Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Segoe UI', sans-serif; fill: #475569; }
+    .t3 { font: 500 14px Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Segoe UI', sans-serif; fill: #1e3a8a; }
+    .zl { font: 600 15px Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Segoe UI', sans-serif; fill: #64748b; }
+    .el { font: 500 14px Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Segoe UI', sans-serif; fill: #2563eb; }
+    .el-tel { font: 500 14px Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Segoe UI', sans-serif; fill: #9333ea; }
+    .req { stroke: #2563eb; stroke-width: 2; fill: none; }
+    .tel { stroke: #9333ea; stroke-width: 1.6; stroke-dasharray: 6 4; fill: none; }
+    .num { fill: #2563eb; }
+    .numt { font: 700 13px 'Segoe UI', sans-serif; fill: #ffffff; }
+    .ah-req { fill: #2563eb; }
+    .ah-tel { fill: #9333ea; }
+  </style>
+  <defs>
+    <marker id="a-req" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="ah-req"/>
+    </marker>
+    <marker id="a-tel" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="ah-tel"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1040" height="730" rx="16"/>
+
+  <!-- OCI 경계 -->
+  <rect class="zone" x="204" y="26" width="500" height="690" rx="14"/>
+  <text class="zl" x="224" y="54">Oracle Cloud Infrastructure</text>
+
+  <!-- 앱 서버 VM -->
+  <rect class="vm" x="226" y="72" width="458" height="440" rx="12"/>
+  <text class="t1" x="246" y="102">앱 서버  VM.Standard.A1.Flex</text>
+  <text class="t2" x="246" y="126">Ampere ARM64, 2 OCPU, 12GB RAM</text>
+
+  <!-- nginx -->
+  <rect class="card-in" x="256" y="146" width="400" height="86" rx="10"/>
+  <text class="t1" x="276" y="174">nginx</text>
+  <text class="t2" x="276" y="198">:443, TLS 1.2/1.3, HTTP/2</text>
+  <text class="t2" x="276" y="219">정적 파일, IP별 요청 제한</text>
+
+  <!-- Spring Boot -->
+  <rect class="card-in" x="256" y="270" width="400" height="154" rx="10"/>
+  <text class="t1" x="276" y="298">Spring Boot 3.5</text>
+  <text class="t2" x="276" y="321">127.0.0.1:8080, JDK 17, 힙 1~4GB (G1)</text>
+  <rect class="chip" x="276" y="336" width="118" height="30" rx="6"/>
+  <text class="t3" x="335" y="356" text-anchor="middle">판정 job</text>
+  <rect class="chip" x="402" y="336" width="118" height="30" rx="6"/>
+  <text class="t3" x="461" y="356" text-anchor="middle">콜백 풀 10</text>
+  <rect class="chip" x="528" y="336" width="118" height="30" rx="6"/>
+  <text class="t3" x="587" y="356" text-anchor="middle">Hikari 10</text>
+  <rect class="chip-tel" x="276" y="380" width="210" height="32" rx="6"/>
+  <text class="t2" x="291" y="401">Actuator  127.0.0.1:9090</text>
+
+  <!-- Alloy -->
+  <rect class="card-in" x="500" y="436" width="156" height="62" rx="10"/>
+  <text class="t1" x="578" y="462" text-anchor="middle">Grafana Alloy</text>
+  <text class="t2" x="578" y="485" text-anchor="middle">지표 60초, 로그</text>
+
+  <!-- MySQL HeatWave -->
+  <rect class="card" x="256" y="570" width="230" height="74" rx="10"/>
+  <text class="t1" x="276" y="598">MySQL HeatWave</text>
+  <text class="t2" x="276" y="621">관리형, 사설 IP :3306</text>
+
+  <!-- OCI 알람 -->
+  <rect class="card" x="508" y="640" width="176" height="62" rx="10"/>
+  <text class="t1" x="596" y="666" text-anchor="middle">OCI 알람 → 이메일</text>
+  <text class="t2" x="596" y="688" text-anchor="middle">DB 디스크, CPU</text>
+
+  <!-- 왼쪽 열 -->
+  <rect class="card" x="14" y="150" width="166" height="80" rx="10"/>
+  <text class="t1" x="97" y="183" text-anchor="middle">사용자</text>
+  <text class="t2" x="97" y="207" text-anchor="middle">브라우저, 1초 폴링</text>
+
+  <rect class="card" x="14" y="400" width="166" height="118" rx="10"/>
+  <text class="t1" x="97" y="430" text-anchor="middle">외부 프로브</text>
+  <text class="t2" x="97" y="454" text-anchor="middle">Grafana Synthetics</text>
+  <text class="t2" x="97" y="476" text-anchor="middle">/api/health/db 1분</text>
+  <text class="t2" x="97" y="498" text-anchor="middle">서울, 도쿄</text>
+
+  <!-- 오른쪽 열 -->
+  <rect class="card" x="744" y="244" width="282" height="90" rx="10"/>
+  <text class="t1" x="885" y="274" text-anchor="middle">LLM API</text>
+  <text class="t2" x="885" y="297" text-anchor="middle">OpenAI (운영), Anthropic, Google</text>
+  <text class="t2" x="885" y="319" text-anchor="middle">호출당 상한 180~240초</text>
+
+  <rect class="card" x="744" y="346" width="282" height="52" rx="10"/>
+  <text class="t1" x="885" y="378" text-anchor="middle">카카오 OAuth</text>
+
+  <rect class="card" x="744" y="430" width="282" height="110" rx="10"/>
+  <text class="t1" x="885" y="462" text-anchor="middle">Grafana Cloud</text>
+  <text class="t2" x="885" y="486" text-anchor="middle">Prometheus, Loki</text>
+  <text class="t2" x="885" y="508" text-anchor="middle">알림 규칙, 대시보드</text>
+
+  <rect class="card" x="744" y="640" width="282" height="62" rx="10"/>
+  <text class="t1" x="885" y="666" text-anchor="middle">Discord, 이메일</text>
+  <text class="t2" x="885" y="688" text-anchor="middle">critical은 두 곳 모두</text>
+
+  <!-- 요청 경로 -->
+  <path class="req" d="M180,190 H254" marker-end="url(#a-req)"/>
+  <circle class="num" cx="241" cy="190" r="11"/><text class="numt" x="241" y="194.5" text-anchor="middle">1</text>
+
+  <path class="req" d="M400,232 V268" marker-end="url(#a-req)"/>
+  <circle class="num" cx="400" cy="250" r="11"/><text class="numt" x="400" y="254.5" text-anchor="middle">2</text>
+  <text class="el" x="420" y="255">keepalive</text>
+
+  <path class="req" d="M320,424 V568" marker-end="url(#a-req)"/>
+  <circle class="num" cx="320" cy="540" r="11"/><text class="numt" x="320" y="544.5" text-anchor="middle">3</text>
+  <text class="el" x="340" y="545">JDBC</text>
+
+  <path class="req" d="M656,290 H742" marker-end="url(#a-req)"/>
+  <circle class="num" cx="669" cy="290" r="11"/><text class="numt" x="669" y="294.5" text-anchor="middle">4</text>
+
+  <path class="req" d="M656,372 H742" marker-end="url(#a-req)"/>
+  <circle class="num" cx="669" cy="372" r="11"/><text class="numt" x="669" y="376.5" text-anchor="middle">5</text>
+
+  <!-- 관측과 알림 -->
+  <path class="tel" d="M486,396 H578 V434" marker-end="url(#a-tel)"/>
+  <path class="tel" d="M486,600 H578 V500" marker-end="url(#a-tel)"/>
+  <text class="el-tel" x="588" y="560">읽기 전용 계정</text>
+  <path class="tel" d="M656,467 H742" marker-end="url(#a-tel)"/>
+  <path class="tel" d="M180,450 L254,228" marker-end="url(#a-tel)"/>
+  <path class="tel" d="M885,540 V638" marker-end="url(#a-tel)"/>
+  <path class="tel" d="M684,671 H742" marker-end="url(#a-tel)"/>
+  <path class="tel" d="M486,630 L506,652" marker-end="url(#a-tel)"/>
+
+  <!-- 범례 -->
+  <path class="req" d="M18,606 H52"/>
+  <text class="t2" x="62" y="611">요청 경로</text>
+  <path class="tel" d="M18,638 H52"/>
+  <text class="t2" x="62" y="643">관측과 알림</text>
+  <text class="t2" x="18" y="680">번호는 본문 목록 순서</text>
+</svg>
