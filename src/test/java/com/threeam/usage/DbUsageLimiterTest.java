@@ -3,7 +3,10 @@ package com.threeam.usage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.threeam.global.exception.ErrorCode;
@@ -108,14 +111,30 @@ class DbUsageLimiterTest {
     }
 
     @Test
-    @DisplayName("생성 락 — 이미 잡혀 있으면(upsert 0행) 접수를 거부한다")
-    void acquireInFlight_rejectsWhenLocked() {
-        given(generationLockRepository.acquire(
-                org.mockito.ArgumentMatchers.eq("CHAT:1"),
-                org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any())).willReturn(0);
+    @DisplayName("생성 락 — 행이 없으면 새로 넣어 획득하고, 만료 검사는 하지 않는다")
+    void acquireInFlight_insertsWhenAbsent() {
+        given(generationLockRepository.insertIfAbsent(eq("ASSESSMENT:1"), any())).willReturn(1);
 
-        assertThatThrownBy(() -> limiter.acquireInFlight(UsageKind.CHAT, 1L))
+        assertThatCode(() -> limiter.acquireInFlight(UsageKind.ASSESSMENT, 1L)).doesNotThrowAnyException();
+        verify(generationLockRepository, never()).takeOverIfExpired(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("생성 락 — 행이 있어도 만료됐으면 뺏어서 획득한다")
+    void acquireInFlight_takesOverExpired() {
+        given(generationLockRepository.insertIfAbsent(eq("ASSESSMENT:1"), any())).willReturn(0);
+        given(generationLockRepository.takeOverIfExpired(eq("ASSESSMENT:1"), any(), any())).willReturn(1);
+
+        assertThatCode(() -> limiter.acquireInFlight(UsageKind.ASSESSMENT, 1L)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("생성 락 — 유효한 락이 있으면(넣기 0행, 뺏기 0행) 접수를 거부한다")
+    void acquireInFlight_rejectsWhenLocked() {
+        given(generationLockRepository.insertIfAbsent(eq("ASSESSMENT:1"), any())).willReturn(0);
+        given(generationLockRepository.takeOverIfExpired(eq("ASSESSMENT:1"), any(), any())).willReturn(0);
+
+        assertThatThrownBy(() -> limiter.acquireInFlight(UsageKind.ASSESSMENT, 1L))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.GENERATION_IN_PROGRESS);
     }

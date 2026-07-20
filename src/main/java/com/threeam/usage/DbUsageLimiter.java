@@ -34,8 +34,9 @@ public class DbUsageLimiter implements UsageLimiter {
     public void acquireInFlight(UsageKind kind, Long userId) {
         LocalDateTime now = LocalDateTime.now(KST);
         LocalDateTime until = now.plusSeconds(properties.lockTtlSeconds(kind));
-        // 원자 upsert. 반환 0이면 아직 유효한 락이 있다는 뜻 — 이미 생성 중이므로 거부한다.
-        if (generationLockRepository.acquire(lockKey(kind, userId), now, until) == 0) {
+        String key = lockKey(kind, userId);
+        if (generationLockRepository.insertIfAbsent(key, until) == 0
+                && generationLockRepository.takeOverIfExpired(key, now, until) == 0) {
             throw new BusinessException(ErrorCode.GENERATION_IN_PROGRESS);
         }
     }
