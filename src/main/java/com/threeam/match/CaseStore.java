@@ -36,7 +36,7 @@ public class CaseStore {
     void load() {
         Path path = Path.of(caseFile);
         if (!Files.exists(path)) {
-            log.error("사례 파일 없음: {} — 비슷한 사례가 항상 비어 나간다", path.toAbsolutePath());
+            log.error("사례 파일 없음: {} — 비슷한 사례가 항상 비어 나감", path.toAbsolutePath());
             return;
         }
         try {
@@ -55,7 +55,7 @@ public class CaseStore {
             cases = List.copyOf(loaded);
             log.info("사례 {}건 로드: {}", cases.size(), path.toAbsolutePath());
         } catch (Exception e) {
-            log.error("사례 파일 파싱 실패: {} — 비슷한 사례가 항상 비어 나간다", path.toAbsolutePath(), e);
+            log.error("사례 파일 파싱 실패: {} — 비슷한 사례가 항상 비어 나감", path.toAbsolutePath(), e);
         }
     }
 

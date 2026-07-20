@@ -24,7 +24,7 @@ public class RelationshipPsychologyConverter
         try {
             return MAPPER.writeValueAsString(attribute);
         } catch (Exception e) {
-            log.error("관계 심리 직렬화 실패 — 이 진단은 관계 심리 없이 저장된다", e);
+            log.error("관계 심리 직렬화 실패 — 이 진단은 관계 심리 없이 저장됨", e);
             return null;
         }
     }
@@ -37,7 +37,7 @@ public class RelationshipPsychologyConverter
         try {
             return MAPPER.readValue(dbData, RelationshipPsychology.class);
         } catch (Exception e) {
-            log.error("관계 심리 역직렬화 실패 — 이 진단은 관계 심리 없이 표시된다", e);
+            log.error("관계 심리 역직렬화 실패 — 이 진단은 관계 심리 없이 표시됨", e);
             return null;
         }
     }

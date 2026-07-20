@@ -41,7 +41,7 @@ public class VertexAiLlmClient extends GoogleGenerateContentClient {
             return GoogleCredentials.getApplicationDefault().createScoped(CLOUD_PLATFORM_SCOPE);
         } catch (IOException e) {
             throw new IllegalStateException(
-                    "GCP 자격증명 로드 실패 — GOOGLE_APPLICATION_CREDENTIALS 환경변수를 확인하세요", e);
+                    "GCP 자격증명 로드 실패 — GOOGLE_APPLICATION_CREDENTIALS 환경변수 확인 필요", e);
         }
     }
 

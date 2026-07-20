@@ -88,7 +88,7 @@ public class PaidMatchService {
                         if (txService.save(material.assessmentId(), storyId, userId, settled)) {
                             recordUsageQuietly(userId);
                         } else {
-                            log.warn("이미 저장된 매칭 — 차감 없이 반환한다 assessmentId={}",
+                            log.warn("이미 저장된 매칭 — 차감 없이 반환함 assessmentId={}",
                                     material.assessmentId());
                         }
                         return toResponse(settled, profile);
@@ -138,7 +138,7 @@ public class PaidMatchService {
         }
         // 해설 없이 사례만 남는다 — 왜 닮았는지는 지어내느니 비워 두는 게 낫다.
         // 요약도 비운다: 버려진 카드를 설명하는 문장이 남으면 화면과 어긋난다.
-        log.warn("매칭 선택이 전부 무효 — 점수 순 상위로 대체한다 응답수={}", picked.items().size());
+        log.warn("매칭 선택이 전부 무효 — 점수 순 상위로 대체함 응답수={}", picked.items().size());
         List<MatchPick> fallback = new ArrayList<>();
         pool.successes().stream().limit(band.successMax())
                 .forEach(target -> fallback.add(new MatchPick(target.getId(), null, null, null)));
@@ -191,7 +191,7 @@ public class PaidMatchService {
                 .filter(tag -> {
                     boolean blocked = BLOCKED.stream().anyMatch(tag::contains);
                     if (blocked) {
-                        log.warn("적나라한 태그를 걸렀다 tag={}", tag);
+                        log.warn("적나라한 태그 걸러냄 tag={}", tag);
                     }
                     return !blocked;
                 })

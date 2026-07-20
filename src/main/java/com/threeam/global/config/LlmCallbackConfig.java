@@ -33,7 +33,7 @@ public class LlmCallbackConfig {
         // 큐까지 찼으면 호출 스레드(=HttpClient 스레드)에서 직접 실행한다. 후속 작업은 유실되면
         // 답변이 저장되지 않는 것이라 버릴 수 없다 — 밀리더라도 반드시 실행되는 쪽을 택한다.
         executor.setRejectedExecutionHandler((task, pool) -> {
-            log.warn("LLM 후속 작업 큐 포화 — 호출 스레드에서 직접 실행한다(활성 {}, 큐 {})",
+            log.warn("LLM 후속 작업 큐 포화 — 호출 스레드에서 직접 실행함(활성 {}, 큐 {})",
                     pool.getActiveCount(), pool.getQueue().size());
             task.run();
         });

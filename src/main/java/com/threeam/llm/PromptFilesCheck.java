@@ -32,8 +32,8 @@ public class PromptFilesCheck {
         log.info("채팅 예시 턴 {}쌍 (llm.chat.examples)", examples);
         // 목표는 비면 판정 자체를 건너뛴다 — 자유 대화로 조용히 돌기 때문에 여기서 한 번 알린다.
         if (!goalProperties.enabled()) {
-            log.warn("탐색 목표 미주입: llm.goals(judge, items)가 비어 있다 — persona.yml의 llm.goals가 없거나 안 읽혔다. "
-                    + "채팅은 목표 없는 자유 대화로 돈다.");
+            log.warn("탐색 목표 미주입: llm.goals(judge, items)가 비어 있음 — persona.yml의 llm.goals가 없거나 안 읽힘. "
+                    + "채팅은 목표 없는 자유 대화로 진행됨");
         }
         warnIfPlaceholder("extractor.yml", "llm.extraction.prompt", extractionProperties.getPrompt());
         warnIfPlaceholder("rubric.yml", "llm.assessment.rubric", assessmentProperties.getRubric());
@@ -47,8 +47,8 @@ public class PromptFilesCheck {
 
     private void warnIfPlaceholder(String file, String key, String value) {
         if (value == null || value.strip().length() < PLACEHOLDER_MAX_LENGTH) {
-            log.warn("프롬프트 미주입: {}({})가 자리표시자 수준이다 — {}이(가) 없거나 안 읽혔다. "
-                    + "서비스는 돌지만 품질 규칙이 빠진 상태다.", key, length(value), file);
+            log.warn("프롬프트 미주입: {}({})가 자리표시자 수준임 — {}이(가) 없거나 안 읽힘. "
+                    + "서비스는 돌지만 품질 규칙이 빠진 상태", key, length(value), file);
         }
     }
 

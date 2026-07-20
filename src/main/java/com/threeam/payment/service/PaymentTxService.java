@@ -134,7 +134,7 @@ public class PaymentTxService {
             return toResponse(payment);
         }
         if (revivable) {
-            log.warn("만료 처리된 주문이 실제로는 결제됨 — 되살려 지급한다 orderId={}", orderId);
+            log.warn("만료 처리된 주문이 실제로는 결제됨 — 되살려 지급함 orderId={}", orderId);
         }
 
         switch (result.status()) {

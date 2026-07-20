@@ -217,7 +217,7 @@ public class StoryService {
         try {
             messageTxService.appendAssistantReply(storyId, Message.FALLBACK_CONTENT);
         } catch (RuntimeException e) {
-            log.error("폴백 메시지 저장까지 실패 storyId={} — 유저 폴링이 종료되지 않는다", storyId, e);
+            log.error("폴백 메시지 저장까지 실패 storyId={} — 유저 폴링이 종료되지 않음", storyId, e);
         }
     }
 

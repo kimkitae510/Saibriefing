@@ -68,7 +68,7 @@ public class AnthropicMessagesClient {
                                                          Map<String, Object> googleSchema) {
         if (properties.getApiKey() == null || properties.getApiKey().isBlank()) {
             return CompletableFuture.failedFuture(
-                    new IllegalStateException("ANTHROPIC_API_KEY가 비어 있다 — 판독 프로바이더 설정 확인"));
+                    new IllegalStateException("ANTHROPIC_API_KEY가 비어 있음 — 판독 프로바이더 설정 확인"));
         }
         Map<String, Object> schema = StrictJsonSchema.fromGoogle(googleSchema);
         Call call = new Call("판독", properties.getReadingModel(), READING_MAX_TOKENS, null,
@@ -85,7 +85,7 @@ public class AnthropicMessagesClient {
     public CompletableFuture<String> generateChatText(List<ChatMessage> messages, boolean deep) {
         if (deep ? !properties.chatDeepEnabled() : !properties.chatEnabled()) {
             return CompletableFuture.failedFuture(
-                    new IllegalStateException("anthropic 채팅 모델이나 키가 비어 있다 — 채팅 프로바이더 설정 확인"));
+                    new IllegalStateException("anthropic 채팅 모델이나 키가 비어 있음 — 채팅 프로바이더 설정 확인"));
         }
         Call call = deep
                 ? new Call("채팅", properties.getChatDeepModel(), CHAT_MAX_TOKENS,

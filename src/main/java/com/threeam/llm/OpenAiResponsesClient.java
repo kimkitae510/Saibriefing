@@ -446,10 +446,10 @@ public class OpenAiResponsesClient {
     // 호출마다 모델이 다르므로(판독, 결정, 채팅) 검사도 그 호출의 모델로 한다.
     private String missingConfig(String model, String kind) {
         if (properties.getApiKey() == null || properties.getApiKey().isBlank()) {
-            return "OPENAI_API_KEY가 비어 있다 — openai 프로바이더 설정 확인";
+            return "OPENAI_API_KEY가 비어 있음 — openai 프로바이더 설정 확인";
         }
         if (model == null || model.isBlank()) {
-            return "openai " + kind + " 호출의 모델 이름이 비어 있다 — LLM_OPENAI_*_MODEL 확인";
+            return "openai " + kind + " 호출의 모델 이름이 비어 있음 — LLM_OPENAI_*_MODEL 확인";
         }
         return null;
     }

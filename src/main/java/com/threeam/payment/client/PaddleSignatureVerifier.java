@@ -32,7 +32,7 @@ public class PaddleSignatureVerifier {
         String secret = properties.getPaddle().getWebhookSecret();
         // 키가 없으면 검증할 방법이 없다 — 통과시키지 않고 막는다(열어두면 검증이 없는 것과 같다).
         if (secret == null || secret.isBlank()) {
-            log.error("패들 웹훅 시크릿 미설정 — 검증할 수 없어 거부한다");
+            log.error("패들 웹훅 시크릿 미설정 — 검증할 수 없어 거부함");
             return false;
         }
         if (rawBody == null || signatureHeader == null || signatureHeader.isBlank()) {

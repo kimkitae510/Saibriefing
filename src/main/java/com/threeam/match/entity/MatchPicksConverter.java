@@ -23,7 +23,7 @@ public class MatchPicksConverter implements AttributeConverter<MatchPick.Picks, 
             return MAPPER.writeValueAsString(attribute == null ? empty() : attribute);
         } catch (Exception e) {
             // 여기서 null을 돌려주면 NOT NULL 컬럼에 걸려 저장 자체가 터진다 — 빈 목록으로 남긴다.
-            log.error("매칭 선택 직렬화 실패 — 빈 목록으로 저장된다", e);
+            log.error("매칭 선택 직렬화 실패 — 빈 목록으로 저장됨", e);
             return "{\"items\":[]}";
         }
     }
@@ -40,7 +40,7 @@ public class MatchPicksConverter implements AttributeConverter<MatchPick.Picks, 
         try {
             return MAPPER.readValue(dbData, MatchPick.Picks.class);
         } catch (Exception e) {
-            log.error("매칭 선택 역직렬화 실패 — 사례 없이 표시된다", e);
+            log.error("매칭 선택 역직렬화 실패 — 사례 없이 표시됨", e);
             return empty();
         }
     }

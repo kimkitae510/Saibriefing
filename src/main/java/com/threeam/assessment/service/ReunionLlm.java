@@ -545,7 +545,7 @@ public class ReunionLlm {
         }
         if (summary.isBlank() || items.isEmpty()) {
             // 요약이나 항목이 없으면 화면 진단 층이 성립하지 않는다 — 없는 것으로 둔다.
-            log.warn("화면 표시용 진단 미추출 — 판독은 진단 없이 진행된다");
+            log.warn("화면 표시용 진단 미추출 — 판독은 진단 없이 진행됨");
             return null;
         }
         JsonNode insight = node.path("timeInsight");
