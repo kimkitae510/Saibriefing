@@ -40,7 +40,9 @@ export function OAuthCallbackPage() {
       setError('인가 코드를 받지 못했습니다. 다시 시도해 주세요.');
       return;
     }
-    if (stored.state && state !== stored.state) {
+    // 저장된 state가 없으면 이 탭에서 시작한 로그인이 아니다. 남이 만든 콜백 링크를 열면 그 사람의
+    // 카카오 계정에 지금 게스트(사연 포함)가 연결되므로, 없을 때도 거절한다.
+    if (!stored.state || state !== stored.state) {
       setError('요청을 확인하지 못했습니다. 다시 시도해 주세요.');
       return;
     }
