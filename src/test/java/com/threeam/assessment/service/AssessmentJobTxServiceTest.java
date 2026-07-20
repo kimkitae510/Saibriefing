@@ -180,10 +180,12 @@ class AssessmentJobTxServiceTest {
         a.start();
         // 죽기 직전에 갱신된 작업 — 갱신 시각으로 걸렀으면 살아 있는 것으로 오판하던 판
         AssessmentJob b = job(2L, null, null, LocalDateTime.now().minusSeconds(5));
+        ReflectionTestUtils.setField(b, "userId", 2L);
         given(jobRepository.findByStatusIn(AssessmentJobTxService.ACTIVE))
                 .willReturn(List.of(a, b));
 
-        assertThat(service.failStale()).isEqualTo(2);
+        // 락을 풀 유저 목록 — 호출부(AssessmentJobRecovery)가 이 id로 생성 락을 푼다
+        assertThat(service.failStale()).containsExactlyInAnyOrder(1L, 2L);
 
         assertThat(a.getStatus()).isEqualTo(AssessmentJob.Status.FAILED);
         assertThat(a.getError()).isEqualTo("서버 재시작으로 중단");

@@ -21,7 +21,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 // 분석 작업 오케스트레이션 — 접수(사전 검사, 합류, 생성)와 A/B 병렬 실행, 조립, 마감.
-// 상태의 원본은 assessment_jobs 행이다. 인플라이트 잠금(인메모리)은 연타를 접수 단계에서 끊는 빠른 가드일 뿐이다.
+// 상태의 원본은 assessment_jobs 행이다. 생성 잠금(generation_lock 행)은 연타를 접수 단계에서 끊는 빠른 가드일 뿐이다.
 // 트랜잭션 밖(NOT_SUPPORTED) — DB 쓰기는 전부 짧은 트랜잭션 서비스로, 느린 LLM 대기는 그 사이에서 논블로킹으로.
 @Slf4j
 @Service
