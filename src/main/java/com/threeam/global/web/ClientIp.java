@@ -2,18 +2,15 @@ package com.threeam.global.web;
 
 import jakarta.servlet.http.HttpServletRequest;
 
-// 프록시/로드밸런서 뒤에서도 실제 클라이언트 IP를 얻는다. X-Forwarded-For의 첫 항목이 원 IP.
-// 주의: XFF는 위조 가능하므로 신뢰 경계(믿을 수 있는 프록시)가 앞단에 있을 때만 의미가 있다.
+// X-Forwarded-For 헤더를 직접 읽지 않는다. 첫 항목은 클라이언트가 보낸 값이라 위조된다.
+// 운영은 forward-headers-strategy: native(톰캣 RemoteIpValve)가 헤더를 오른쪽부터 읽어 nginx가 붙인
+// 실제 IP를 remoteAddr에 넣고, 헤더에는 처리 못 한 앞부분(위조분)만 남긴다. 그래서 remoteAddr만 믿는다.
 public final class ClientIp {
 
     private ClientIp() {
     }
 
     public static String of(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
         return request.getRemoteAddr();
     }
 }
