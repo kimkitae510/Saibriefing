@@ -189,7 +189,8 @@ abstract class GoogleGenerateContentClient implements LlmClient {
         }
         log.warn("{} 503(혼잡) — {}초 뒤 1회 재시도", providerName(), RETRY_DELAY_SECONDS);
         // 재시도는 곧 호출 비용 2배다. 재시도 빈도를 세어 두면 "재시도로 비용이 튄 날"을 뒤늦게라도 짚을 수 있다.
-        Metrics.counter("llm.retries", "provider", providerName()).increment();
+        // reason 태그는 다른 클라이언트의 llm.retries와 키를 맞춘 것 — 키가 다르면 Prometheus 레지스트리가 거부한다.
+        Metrics.counter("llm.retries", "provider", providerName(), "reason", "overloaded").increment();
         return CompletableFuture.supplyAsync(() -> null,
                         CompletableFuture.delayedExecutor(RETRY_DELAY_SECONDS, TimeUnit.SECONDS))
                 .thenCompose(ignored -> httpClient.sendAsync(
