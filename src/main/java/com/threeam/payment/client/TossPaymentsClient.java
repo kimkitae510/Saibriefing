@@ -3,8 +3,10 @@ package com.threeam.payment.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.threeam.global.http.NetworkFailureReason;
 import com.threeam.payment.entity.PaymentItem;
 import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -45,6 +47,12 @@ public class TossPaymentsClient implements PaymentGateway {
     private static final Set<String> CONFIRM_IN_DOUBT_CODES =
             Set.of("IDEMPOTENT_REQUEST_PROCESSING", "ALREADY_PROCESSED_PAYMENT");
 
+    // 토스 승인은 보통 1초 안팎이다. 5초 버킷이 "PG 응답 지연" 알림의 기준선이고, 끝은 타임아웃(60초).
+    private static final Duration[] PG_BUCKETS = {
+            Duration.ofMillis(250), Duration.ofMillis(500), Duration.ofSeconds(1), Duration.ofSeconds(2),
+            Duration.ofSeconds(3), Duration.ofSeconds(5), Duration.ofSeconds(10), Duration.ofSeconds(30),
+            Duration.ofSeconds(60)};
+
     private final PaymentProperties properties;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -77,7 +85,7 @@ public class TossPaymentsClient implements PaymentGateway {
                 .build();
         // 승인 4xx = 카드 한도, 잔액 부족 등 확실한 거절. 사유를 남기고 FAILED로 확정한다.
         Function<JsonNode, PgPaymentResult> on4xx = node -> confirmRejected(paymentKey, orderId, node);
-        return send(request, on4xx)
+        return send("confirm", request, on4xx)
                 .exceptionallyCompose(ex -> resendIfResponseLost(ex, request, on4xx, orderId));
     }
 
@@ -97,7 +105,7 @@ public class TossPaymentsClient implements PaymentGateway {
         Metrics.counter("payment.confirm.resend").increment();
         return CompletableFuture.supplyAsync(() -> null,
                         CompletableFuture.delayedExecutor(RESEND_DELAY_MILLIS, TimeUnit.MILLISECONDS))
-                .thenCompose(ignored -> send(request, on4xx));
+                .thenCompose(ignored -> send("confirm", request, on4xx));
     }
 
     private PgPaymentResult confirmRejected(String paymentKey, String orderId, JsonNode errorBody) {
@@ -125,7 +133,7 @@ public class TossPaymentsClient implements PaymentGateway {
                 .header("Idempotency-Key", idempotencyKey)
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
-        return send(request, node -> rejected(paymentKey, null, node));
+        return send("cancel", request, node -> rejected(paymentKey, null, node));
     }
 
     @Override
@@ -134,7 +142,7 @@ public class TossPaymentsClient implements PaymentGateway {
                 .GET()
                 .build();
         // 조회 404 = 토스에 이 주문이 없다(위젯까지 못 감). 거절이 아니라 부재로 구분한다.
-        return send(request, node -> "NOT_FOUND_PAYMENT".equals(node.path("code").asText())
+        return send("query", request, node -> "NOT_FOUND_PAYMENT".equals(node.path("code").asText())
                 ? PgPaymentResult.of(null, orderId, PgStatus.NOT_FOUND)
                 : rejected(null, orderId, node));
     }
@@ -149,10 +157,14 @@ public class TossPaymentsClient implements PaymentGateway {
                 .header("Content-Type", "application/json");
     }
 
-    private CompletableFuture<PgPaymentResult> send(HttpRequest request,
+    // op는 confirm, cancel, query. 재전송도 한 번의 호출로 따로 잰다.
+    private CompletableFuture<PgPaymentResult> send(String op, HttpRequest request,
                                                     Function<JsonNode, PgPaymentResult> on4xx) {
+        long start = System.nanoTime();
+        int[] status = {0};
         return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                 .thenApply(response -> {
+                    status[0] = response.statusCode();
                     JsonNode body = readTree(response.body());
                     if (response.statusCode() / 100 == 2) {
                         return parse(body);
@@ -163,7 +175,25 @@ public class TossPaymentsClient implements PaymentGateway {
                     }
                     // 5xx는 토스 쪽 장애 — 실제 처리 여부를 모른다. 불명으로 던져 재동기화에 맡긴다.
                     throw new PaymentGatewayException("토스 응답 5xx: " + response.statusCode());
-                });
+                })
+                .whenComplete((result, ex) -> Timer.builder("payment.pg.call")
+                        .tags("op", op, "result", callResult(status[0], ex))
+                        .serviceLevelObjectives(PG_BUCKETS)
+                        .register(Metrics.globalRegistry)
+                        .record(System.nanoTime() - start, TimeUnit.NANOSECONDS));
+    }
+
+    // 응답이 오면 상태코드로, 안 오면 끊긴 단계로 가른다 — 불명(payment.unknown) 한 덩이로는
+    // 토스가 느린지, 우리 망이 끊겼는지, 토스가 5xx를 내는지 안 갈린다.
+    static String callResult(int status, Throwable ex) {
+        if (status == 0) {
+            String network = NetworkFailureReason.of(ex);
+            return network == null ? "other" : network;
+        }
+        if (status / 100 == 2) {
+            return ex == null ? "ok" : "parse";
+        }
+        return "http_" + (status / 100) + "xx";
     }
 
     private PgPaymentResult rejected(String paymentKey, String orderId, JsonNode errorBody) {

@@ -6,7 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
@@ -129,6 +132,41 @@ class TossPaymentsClientTest {
         assertThat(result.status()).isEqualTo(PgStatus.FAILED);
         assertThat(result.failReason()).startsWith("REJECT_CARD_PAYMENT");
         assertThat(idempotencyKeys).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("응답 유실 뒤 재전송 성공은 끊김 한 번, 성공 한 번으로 따로 잰다")
+    void recordsEachCallWithItsResult() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        Metrics.globalRegistry.add(registry);
+        try {
+            replies.add(HttpExchange::close);
+            replies.add(ex -> respond(ex, 200, DONE_BODY));
+
+            client.confirm("pk_1", "order-1", 6900).join();
+
+            assertThat(registry.get("payment.pg.call").tags("op", "confirm", "result", "network").timer().count())
+                    .isEqualTo(1);
+            assertThat(registry.get("payment.pg.call").tags("op", "confirm", "result", "ok").timer().count())
+                    .isEqualTo(1);
+        } finally {
+            Metrics.globalRegistry.remove(registry);
+        }
+    }
+
+    @Test
+    @DisplayName("응답이 오면 상태코드로, 안 오면 끊긴 단계로 가른다")
+    void callResultByStatusThenNetworkStage() {
+        assertThat(TossPaymentsClient.callResult(200, null)).isEqualTo("ok");
+        assertThat(TossPaymentsClient.callResult(200, new PaymentGatewayException("토스 응답 파싱 실패")))
+                .isEqualTo("parse");
+        assertThat(TossPaymentsClient.callResult(400, null)).isEqualTo("http_4xx");
+        assertThat(TossPaymentsClient.callResult(503, new PaymentGatewayException("토스 응답 5xx: 503")))
+                .isEqualTo("http_5xx");
+        assertThat(TossPaymentsClient.callResult(0, new CompletionException(new HttpTimeoutException("timed out"))))
+                .isEqualTo("timeout");
+        assertThat(TossPaymentsClient.callResult(0, new ConnectException("refused"))).isEqualTo("connect_failed");
+        assertThat(TossPaymentsClient.callResult(0, new IllegalStateException())).isEqualTo("other");
     }
 
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {
