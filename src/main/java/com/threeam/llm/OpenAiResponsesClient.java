@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,18 +49,21 @@ public class OpenAiResponsesClient {
     private final ObjectMapper objectMapper;
     private final OpenAiProperties properties;
     private final HttpClient httpClient;
+    private final LlmCallMetrics callMetrics = new LlmCallMetrics("openai");
 
     public OpenAiResponsesClient(ObjectMapper objectMapper, OpenAiProperties properties) {
         this.objectMapper = objectMapper;
         this.properties = properties;
         AtomicInteger seq = new AtomicInteger();
+        ExecutorService pool = Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "llm-openai-" + seq.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
+        LlmCallMetrics.bindPool(pool, "llm-openai");
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(CONNECT_TIMEOUT)
-                .executor(Executors.newFixedThreadPool(4, r -> {
-                    Thread t = new Thread(r, "llm-openai-" + seq.incrementAndGet());
-                    t.setDaemon(true);
-                    return t;
-                }))
+                .executor(pool)
                 .build();
     }
 
@@ -96,12 +100,10 @@ public class OpenAiResponsesClient {
             return CompletableFuture.failedFuture(new IllegalStateException(missing));
         }
         Map<String, Object> schema = googleSchema == null ? null : StrictJsonSchema.fromGoogle(googleSchema);
-        return send(messages, schema, model, kind, properties.getReadingTimeoutSeconds(), effort(effortOverride))
-                .thenApply(response -> readBody(response, model, kind))
-                .whenComplete((result, ex) -> Metrics.counter("llm.calls",
-                        "provider", "openai",
-                        "result", ex == null ? "success" : "error",
-                        "reason", ex == null ? "none" : "call_failed").increment());
+        long timeout = properties.getReadingTimeoutSeconds();
+        return callMetrics.measure(timeout, () ->
+                send(messages, schema, model, kind, timeout, effort(effortOverride))
+                        .thenApply(response -> readBody(response, model, kind)));
     }
 
     private String effort(String override) {
@@ -191,7 +193,8 @@ public class OpenAiResponsesClient {
         }
         long timeout = properties.getReadingTimeoutSeconds();
         String effort = effort(effortOverride);
-        return httpClient.sendAsync(buildResponsesRequest(messages, model, contextSize, maxCalls, timeout, schema, effort),
+        return callMetrics.measure(timeout, () -> httpClient.sendAsync(
+                        buildResponsesRequest(messages, model, contextSize, maxCalls, timeout, schema, effort),
                         HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                 .thenApply(http -> new Response(http.statusCode(), http.body(), effort))
                 .thenCompose(response -> {
@@ -207,11 +210,7 @@ public class OpenAiResponsesClient {
                                             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                                     .thenApply(http -> new Response(http.statusCode(), http.body(), effort)));
                 })
-                .thenApply(response -> readResponsesBody(response, model, kind, schema != null))
-                .whenComplete((result, ex) -> Metrics.counter("llm.calls",
-                        "provider", "openai",
-                        "result", ex == null ? "success" : "error",
-                        "reason", ex == null ? "none" : "call_failed").increment());
+                .thenApply(response -> readResponsesBody(response, model, kind, schema != null)));
     }
 
     private HttpRequest buildResponsesRequest(List<ChatMessage> messages, String model, String contextSize,
@@ -342,9 +341,14 @@ public class OpenAiResponsesClient {
     private String readResponsesBody(Response response, String model, String kind, boolean json) {
         if (response.status() / 100 != 2) {
             String body = response.body() == null ? "" : response.body();
+            if (LlmCreditException.openAi(response.status(), body)) {
+                log.error("openai {} 크레딧 소진 — 충전 전까지 모든 호출이 실패함: status={} body={}", kind,
+                        response.status(), body.substring(0, Math.min(body.length(), 500)));
+                throw new LlmCreditException();
+            }
             log.error("openai {} 응답 오류: status={} body={}", kind, response.status(),
                     body.substring(0, Math.min(body.length(), 500)));
-            throw new LlmException();
+            throw new LlmHttpStatusException(response.status());
         }
         JsonNode root;
         try {
@@ -434,12 +438,9 @@ public class OpenAiResponsesClient {
             return CompletableFuture.failedFuture(new IllegalStateException(missing));
         }
         Map<String, Object> schema = googleSchema == null ? null : StrictJsonSchema.fromGoogle(googleSchema);
-        return send(messages, schema, model, kind, timeoutSeconds, effort)
-                .thenApply(response -> readBody(response, model, kind))
-                .whenComplete((result, ex) -> Metrics.counter("llm.calls",
-                        "provider", "openai",
-                        "result", ex == null ? "success" : "error",
-                        "reason", ex == null ? "none" : "call_failed").increment());
+        return callMetrics.measure(timeoutSeconds, () ->
+                send(messages, schema, model, kind, timeoutSeconds, effort)
+                        .thenApply(response -> readBody(response, model, kind)));
     }
 
     // 모델 이름은 기본값을 두지 않았다 — 안 뜨는 이유를 로그에서 바로 읽게 하려고 여기서 막는다.
@@ -537,9 +538,14 @@ public class OpenAiResponsesClient {
     private String readBody(Response response, String model, String kind) {
         if (response.status() / 100 != 2) {
             String body = response.body() == null ? "" : response.body();
+            if (LlmCreditException.openAi(response.status(), body)) {
+                log.error("openai {} 크레딧 소진 — 충전 전까지 모든 호출이 실패함: status={} body={}", kind,
+                        response.status(), body.substring(0, Math.min(body.length(), 500)));
+                throw new LlmCreditException();
+            }
             log.error("openai {} 응답 오류: status={} body={}", kind, response.status(),
                     body.substring(0, Math.min(body.length(), 500)));
-            throw new LlmException();
+            throw new LlmHttpStatusException(response.status());
         }
 
         JsonNode root;

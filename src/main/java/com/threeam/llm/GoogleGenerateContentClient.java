@@ -3,8 +3,6 @@ package com.threeam.llm;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Metrics;
-import io.micrometer.core.instrument.Tags;
-import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -35,22 +33,18 @@ abstract class GoogleGenerateContentClient implements LlmClient {
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
-
-    // 지금 진행 중인 LLM 호출 수. 스레드가 아니라 "기다리는 응답"이 이 워크로드의 실제 동시성이다.
-    private final AtomicInteger inflight = new AtomicInteger();
+    private final LlmCallMetrics callMetrics;
 
     protected GoogleGenerateContentClient(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
-        // JDK 기본 내부 풀은 지표가 없어 밖에서 안 보인다. 이름 있는 풀을 쥐여주면
-        // executor_*(활성/큐)로 드러난다 — 콜백 풀(llm-cb)과 같은 관측 방식.
         AtomicInteger seq = new AtomicInteger();
         ExecutorService httpPool = Executors.newFixedThreadPool(8, r -> {
             Thread t = new Thread(r, "llm-http-" + seq.incrementAndGet());
             t.setDaemon(true);
             return t;
         });
-        new ExecutorServiceMetrics(httpPool, "llm-http", Tags.empty()).bindTo(Metrics.globalRegistry);
-        Metrics.gauge("llm.inflight", inflight);
+        LlmCallMetrics.bindPool(httpPool, "llm-http");
+        this.callMetrics = new LlmCallMetrics(providerName());
         this.httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).executor(httpPool).build();
     }
 
@@ -142,43 +136,11 @@ abstract class GoogleGenerateContentClient implements LlmClient {
     }
 
     private CompletableFuture<String> send(HttpRequest request, String kind) {
-        inflight.incrementAndGet();
-        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-                .thenCompose(this::retryOnceIfOverloaded)
-                .thenApply(response -> extractText(response, kind))
-                // 호출 성공/실패 카운터 — 실패율, 호출량을 /actuator/prometheus로 관측(비용, 장애 감지).
-                // 실패는 사유 라벨로 가른다 — "타임아웃 몇 건"을 로그 뒤지지 않고 지표로 바로 본다.
-                .whenComplete((result, ex) -> {
-                    inflight.decrementAndGet();
-                    Metrics.counter("llm.calls",
-                            "provider", providerName(),
-                            "result", ex == null ? "success" : "error",
-                            "reason", ex == null ? "none" : failReason(ex)).increment();
-                });
-    }
-
-    private String failReason(Throwable ex) {
-        Throwable cause = ex;
-        while (cause != null) {
-            if (cause instanceof LlmHttpStatusException statusEx) {
-                return switch (statusEx.status) {
-                    case 429 -> "quota";
-                    case 503 -> "overloaded";
-                    default -> "http_" + (statusEx.status / 100) + "xx";
-                };
-            }
-            if (cause instanceof java.net.http.HttpTimeoutException) {
-                return "timeout";
-            }
-            if (cause instanceof LlmException) {
-                return "parse";
-            }
-            if (cause instanceof java.io.IOException) {
-                return "network";
-            }
-            cause = cause.getCause();
-        }
-        return "other";
+        long timeoutSeconds = request.timeout().map(Duration::toSeconds).orElse(0L);
+        return callMetrics.measure(timeoutSeconds, () ->
+                httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                        .thenCompose(this::retryOnceIfOverloaded)
+                        .thenApply(response -> extractText(response, kind)));
     }
 
     // 503은 피크 시간대의 일상이라(실측) 짧게 기다렸다 1회 재시도한다.

@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,18 +44,21 @@ public class AnthropicMessagesClient {
     private final ObjectMapper objectMapper;
     private final AnthropicProperties properties;
     private final HttpClient httpClient;
+    private final LlmCallMetrics callMetrics = new LlmCallMetrics("anthropic");
 
     public AnthropicMessagesClient(ObjectMapper objectMapper, AnthropicProperties properties) {
         this.objectMapper = objectMapper;
         this.properties = properties;
         AtomicInteger seq = new AtomicInteger();
+        ExecutorService pool = Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "llm-anthropic-" + seq.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
+        LlmCallMetrics.bindPool(pool, "llm-anthropic");
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(CONNECT_TIMEOUT)
-                .executor(Executors.newFixedThreadPool(4, r -> {
-                    Thread t = new Thread(r, "llm-anthropic-" + seq.incrementAndGet());
-                    t.setDaemon(true);
-                    return t;
-                }))
+                .executor(pool)
                 .build();
     }
 
@@ -73,12 +77,11 @@ public class AnthropicMessagesClient {
         Map<String, Object> schema = StrictJsonSchema.fromGoogle(googleSchema);
         Call call = new Call("판독", properties.getReadingModel(), READING_MAX_TOKENS, null,
                 properties.getReadingTimeoutSeconds());
-        return send(call, messages, schema)
+        return callMetrics.measure(0, () -> send(call, messages, schema)
                 .thenCompose(response -> exceedsGrammarLimit(response)
                         ? send(call, withSchemaInPrompt(messages, schema), null)
                         : CompletableFuture.completedFuture(response))
-                .thenApply(response -> readStream(call, response))
-                .whenComplete((result, ex) -> countCall(call, ex));
+                .thenApply(response -> readStream(call, response)));
     }
 
     // 탐색 채팅 답(산문). deep이면 긴 메시지 모델로. 실패하면 예외로 끝나고 다른 모델로 넘기지 않는다.
@@ -92,9 +95,13 @@ public class AnthropicMessagesClient {
                         properties.getChatDeepEffort(), properties.getChatTimeoutSeconds())
                 : new Call("채팅", properties.getChatModel(), CHAT_MAX_TOKENS,
                         properties.getChatEffort(), properties.getChatTimeoutSeconds());
-        return send(call, messages, null)
-                .thenApply(response -> readStream(call, response))
-                .whenComplete((result, ex) -> countCall(call, ex));
+        return measured(call, messages);
+    }
+
+    // 지연 집계는 끈다(0) — 스트리밍이라 타임아웃이 헤더까지만 재서, 전체 시간과 견주면 정상적으로 긴 응답도 느림으로 센다.
+    private CompletableFuture<String> measured(Call call, List<ChatMessage> messages) {
+        return callMetrics.measure(0, () -> send(call, messages, null)
+                .thenApply(response -> readStream(call, response)));
     }
 
     // 호출마다 달라지는 것만 묶는다. effort가 null이면 모델 기본값.
@@ -111,14 +118,6 @@ public class AnthropicMessagesClient {
         return call.chat()
                 ? Map.of("type", "ephemeral", "ttl", "1h")
                 : Map.of("type", "ephemeral");
-    }
-
-    // 태그 키는 다른 클라이언트의 llm.calls와 같아야 한다 — Prometheus는 키가 다른 같은 이름을 거부한다.
-    private void countCall(Call call, Throwable ex) {
-        Metrics.counter("llm.calls",
-                "provider", "anthropic",
-                "result", ex == null ? "success" : "error",
-                "reason", ex == null ? "none" : "call_failed").increment();
     }
 
     private CompletableFuture<Response> send(Call call, List<ChatMessage> messages,
@@ -253,9 +252,14 @@ public class AnthropicMessagesClient {
     private String readStream(Call call, Response response) {
         if (response.events() == null) {
             String body = response.errorBody() == null ? "" : response.errorBody();
+            if (LlmCreditException.anthropic(response.status(), body)) {
+                log.error("anthropic {} 크레딧 소진 — 충전 전까지 모든 호출이 실패함: status={} body={}",
+                        call.kind(), response.status(), body.substring(0, Math.min(body.length(), 500)));
+                throw new LlmCreditException();
+            }
             log.error("anthropic {} 응답 오류: status={} body={}", call.kind(), response.status(),
                     body.substring(0, Math.min(body.length(), 500)));
-            throw new LlmException();
+            throw new LlmHttpStatusException(response.status());
         }
 
         StringBuilder text = new StringBuilder();
