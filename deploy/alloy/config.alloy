@@ -3,6 +3,7 @@
 // 설치:
 //   sudo cp deploy/alloy/config.alloy /etc/alloy/config.alloy
 //   토큰은 /etc/alloy/token (권한 600, 소유 alloy) — 파일 내용이 토큰 문자열 하나다.
+//   nginx 로그를 읽으려면 한 번만: sudo usermod -aG adm alloy
 //   sudo systemctl restart alloy
 //
 // 토큰은 Grafana Cloud 포털의 Access Policy(metrics:write 권한)에서 발급한다.
@@ -73,35 +74,77 @@ prometheus.scrape "db" {
   forward_to      = [prometheus.relabel.trim.receiver]
 }
 
-// ── 로그: WARN/ERROR 덩어리만 로키로 ────────────────────────────────────
-// INFO 전문은 서버 파일에만 남긴다 — 사연(개인정보)이 스밀 수 있는 건 주로 INFO 쪽이라
-// 노출면을 좁히는 결정. 에러 원인 조회의 99%는 WARN/ERROR면 충분하다.
+// ── 앱 로그: INFO 이상을 로키로, 사연 문장이 실리는 두 줄만 뺀다 ───────────
+// 개인정보는 레벨이 아니라 내용으로 막는다. INFO 중 사연 본문이 찍히는 건
+// 판독 근거 기록(LLM이 쓴 근거 전문)과 검색 질의(사연에서 뽑은 검색어) 둘뿐이라
+// 그 덩어리만 버린다. 서버 파일에는 그대로 남는다.
 local.file_match "app_logs" {
   path_targets = [{ __path__ = "/opt/3am/logs/3am.log", job = "3am-app-logs" }]
 }
 
 loki.source.file "app" {
   targets    = local.file_match.app_logs.targets
-  forward_to = [loki.process.warn_error.receiver]
+  forward_to = [loki.process.app.receiver]
 }
 
-loki.process "warn_error" {
+loki.process "app" {
   forward_to = [loki.write.grafana_cloud.receiver]
 
-  // 스택트레이스(레벨 표기 없는 후속 줄)가 에러 본줄과 한 덩어리로 묶이게 먼저 합친다.
+  // 스택트레이스와 여러 줄 메시지(레벨 표기 없는 후속 줄)가 본줄과 한 덩어리로 묶이게 먼저 합친다.
+  // 아래 drop은 덩어리 단위로 걸리므로 근거 기록의 후속 줄까지 같이 버려진다.
   stage.multiline {
     firstline = "^\\d{4}-\\d{2}-\\d{2} "
   }
-  // INFO/DEBUG/TRACE 덩어리는 전송 전에 버린다.
   stage.drop {
-    expression = "\\] (INFO|DEBUG|TRACE) "
+    expression = "\\] (DEBUG|TRACE) "
+  }
+  stage.drop {
+    expression = "판독 근거 기록:|검색 질의:"
+  }
+  // 레벨만 라벨로 올린다 — 대시보드가 레벨별 건수를 본문 파싱 없이 센다. 가짓수 셋.
+  stage.regex {
+    expression = "^\\S+ \\S+ \\[[^\\]]*\\] \\[[^\\]]*\\] (?P<level>[A-Z]+)\\s"
+  }
+  stage.labels {
+    values = { level = "" }
   }
   stage.static_labels {
     values = { app = "3am" }
   }
 }
 
-// ── Grafana Cloud로 전송 (도쿄 리전 스택: pinksquid1124) ─────────────────
+// ── nginx access log: 요청 한 줄 한 줄(봇 스캔, 경로별 호출, UA)을 로키로 ──
+// 앱은 요청 단위 로그를 안 찍고 지표로만 센다. "누가 뭘 때렸나"는 여기서만 보인다.
+// 상태코드와 메서드만 라벨 — 경로, IP, UA를 라벨로 올리면 가짓수가 폭발한다.
+// 그 셋은 조회할 때 pattern 파서로 꺼낸다(deploy/grafana/3am-logs.json 쿼리 참고).
+// 읽기 권한: Ubuntu의 nginx 로그는 www-data:adm 640이라 alloy를 adm 그룹에 넣는다
+// (sudo usermod -aG adm alloy). logrotate가 새 파일을 같은 권한으로 만들어 ACL보다 안전하다.
+local.file_match "nginx_access" {
+  path_targets = [{ __path__ = "/var/log/nginx/access.log", job = "nginx-access" }]
+}
+
+loki.source.file "nginx" {
+  targets    = local.file_match.nginx_access.targets
+  forward_to = [loki.process.nginx.receiver]
+}
+
+loki.process "nginx" {
+  forward_to = [loki.write.grafana_cloud.receiver]
+
+  // combined 형식: ip - user [시각] "METHOD /path HTTP/x" status bytes "referer" "ua"
+  // 깨진 요청("-" 400 같은)은 정규식이 안 걸려 라벨 없이 그대로 보낸다.
+  stage.regex {
+    expression = "^\\S+ \\S+ \\S+ \\[[^\\]]*\\] \"(?P<method>[A-Z]+) [^\"]*\" (?P<status>\\d{3}) "
+  }
+  stage.labels {
+    values = { method = "", status = "" }
+  }
+  stage.static_labels {
+    values = { app = "3am" }
+  }
+}
+
+// ── Grafana Cloud로 전송 ─────────────────────────────────────────────────
 // 토큰 하나로 지표와 로그 둘 다 민다 — 정책(alloy-write)에 metrics:write + logs:write.
 prometheus.remote_write "grafana_cloud" {
   endpoint {
