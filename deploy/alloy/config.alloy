@@ -144,6 +144,33 @@ loki.process "nginx" {
   }
 }
 
+// ── nginx error log: nginx와 앱 사이 연결이 왜 실패했는지 ──
+// access log는 502/504라는 결과만 남긴다. 거절(connect() failed)인지, 앱이 늦은 것(upstream timed out)인지,
+// 앱이 응답 중에 끊은 것(prematurely closed)인지는 여기에만 찍힌다. 권한은 access log와 같다(adm 그룹).
+local.file_match "nginx_error" {
+  path_targets = [{ __path__ = "/var/log/nginx/error.log", job = "nginx-error" }]
+}
+
+loki.source.file "nginx_error" {
+  targets    = local.file_match.nginx_error.targets
+  forward_to = [loki.process.nginx_error.receiver]
+}
+
+loki.process "nginx_error" {
+  forward_to = [loki.write.grafana_cloud.receiver]
+
+  // 형식: 2026/11/14 10:00:00 [error] 123#123: *45 메시지, client: ..., request: "...", upstream: "..."
+  stage.regex {
+    expression = "^\\S+ \\S+ \\[(?P<level>[a-z]+)\\]"
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  stage.static_labels {
+    values = { app = "3am" }
+  }
+}
+
 // ── Grafana Cloud로 전송 ─────────────────────────────────────────────────
 // 토큰 하나로 지표와 로그 둘 다 민다 — 정책(alloy-write)에 metrics:write + logs:write.
 prometheus.remote_write "grafana_cloud" {
