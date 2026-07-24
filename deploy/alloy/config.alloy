@@ -23,7 +23,9 @@ prometheus.scrape "app" {
 // 컬렉터를 필요한 것만 켠다 — 기본값 전부를 켜면 시리즈가 수백 개 늘어난다.
 prometheus.exporter.unix "host" {
   // sockstat/netstat: TCP 연결 상태(established, TIME_WAIT, 재전송) — 커넥션 계층 진단용.
-  set_collectors = ["cpu", "meminfo", "filesystem", "diskstats", "netdev", "loadavg", "uname", "sockstat", "netstat"]
+  // vmstat: oom_kill 카운터. 스왑이 없어 OOM이면 자바가 죽고 5초 뒤 되살아나 다운 알림으로는 안 잡힌다.
+  // timex: 시계 동기화 상태. 시계가 틀어지면 JWT 만료, 결제 서명, 로그 시각이 조용히 어긋난다.
+  set_collectors = ["cpu", "meminfo", "filesystem", "diskstats", "netdev", "loadavg", "uname", "sockstat", "netstat", "vmstat", "timex"]
 
   filesystem {
     // 가상/임시 마운트는 디스크 경보에 의미가 없다.
