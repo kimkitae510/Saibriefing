@@ -9,6 +9,7 @@ import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 // 잔여 회수는 이용권(entitlements) 하나로만 센다. 예전에는 일일 무료 쿼터(usage_quota),
@@ -29,8 +30,11 @@ public class DbUsageLimiter implements UsageLimiter {
     private final GenerationLockRepository generationLockRepository;
     private final UserRepository userRepository;
 
+    // 두 문장을 한 트랜잭션에 묶지 않는다. INSERT IGNORE는 중복 행에 공유 락을 남기는데, 그걸 쥔 채
+    // UPDATE의 배타 락으로 올라가려는 요청이 둘 이상이면 InnoDB가 교착으로 끊는다(유저는 429 대신 500).
+    // 문장마다 커밋하면 공유 락이 UPDATE 전에 풀리고, 각 문장의 반환값만으로 판정이 선다.
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void acquireInFlight(UsageKind kind, Long userId) {
         LocalDateTime now = LocalDateTime.now(KST);
         LocalDateTime until = now.plusSeconds(properties.lockTtlSeconds(kind));

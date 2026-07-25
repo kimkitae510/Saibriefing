@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface GenerationLockRepository extends JpaRepository<GenerationLock, String> {
 
@@ -13,13 +14,16 @@ public interface GenerationLockRepository extends JpaRepository<GenerationLock, 
     // (useAffectedRows=false)이 CLIENT_FOUND_ROWS를 켜서 그 경우도 1이 돌아와 락이 한 번도 막지 못했다.
     // 아래 두 문장은 그 플래그가 있든 없든 반환값의 뜻이 같다.
     // 날짜는 DB 타임존에 안 묶이게 앱(KST)에서 계산해 넘긴다.
+    // 두 문장은 각자 트랜잭션으로 커밋한다(호출부 DbUsageLimiter.acquireInFlight 참고).
     @Modifying
+    @Transactional
     @Query(value = "INSERT IGNORE INTO generation_lock (lock_key, locked_until) VALUES (:key, :until)",
             nativeQuery = true)
     int insertIfAbsent(@Param("key") String key, @Param("until") LocalDateTime until);
 
     // 만료된 락만 새 시각으로 뺏는다. 동시에 두 요청이 와도 행 락 뒤에서 조건을 다시 읽어 하나만 1을 받는다.
     @Modifying
+    @Transactional
     @Query(value = """
             UPDATE generation_lock SET locked_until = :until
             WHERE lock_key = :key AND locked_until < :now
