@@ -15,7 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 // 탐색 채팅이 부르는 모델의 자리. 설정된 경로 하나만 탄다: Claude 채팅 모델(LLM_ANTHROPIC_CHAT_MODEL,
-// 긴 메시지는 LLM_ANTHROPIC_CHAT_DEEP_MODEL), 없으면 OpenAI 채팅 모델(LLM_OPENAI_CHAT_MODEL), 그것도
+// 긴 메시지는 LLM_OPENAI_CHAT_DEEP_MODEL, 없으면 LLM_ANTHROPIC_CHAT_DEEP_MODEL), 없으면 OpenAI 채팅 모델(LLM_OPENAI_CHAT_MODEL), 그것도
 // 없으면 기존 프로바이더 스위치(LlmClient: mock, gemini, vertex) — 키 없는 개발 환경과 테스트가 mock으로
 // 그대로 돌게 하려는 분기다. 실패하면 다른 모델로 다시 부르지 않는다. 모델마다 말투가 달라 대화 중간에
 // 결이 바뀌고, 실패는 안내 말풍선과 다시 보내기로 받는다(StoryService).

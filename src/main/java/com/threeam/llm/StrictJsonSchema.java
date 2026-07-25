@@ -8,15 +8,15 @@ import java.util.Map;
 import java.util.Set;
 
 // Google(Gemini) responseSchema를 엄격 모드 JSON Schema로 변환한다.
-// 판독 스키마의 원본은 ReadingLlm의 Google 형식 하나로 유지하고(스키마가 프롬프트를 이긴다 —
-// 두 벌을 손으로 맞추면 반드시 어긋난다), 다른 프로바이더로 보낼 때만 이 변환을 거친다.
+// 판독 스키마의 원본은 ReadingLlm의 Google 형식 하나로 유지하고(두 벌을 손으로 맞추면
+// 반드시 어긋난다), 다른 프로바이더로 보낼 때만 이 변환을 거친다.
 // Anthropic structured outputs와 OpenAI strict 모드가 같은 규약을 요구해 둘이 함께 쓴다.
 //
 // 규칙: 타입 소문자화, propertyOrdering 제거(JSON Schema에 없음), OBJECT에
 // additionalProperties:false, nullable:true는 anyOf [본타입, null]로.
 // 그리고 모든 속성을 required로 올리고 원래 선택이던 것은 null 허용으로 바꾼다 —
 // 두 프로바이더 모두 이 모양을 요구한다. Anthropic은 선택 속성이 있으면 스키마를 문법으로
-// 컴파일할 때 경우의 수가 곱해져 "compiled grammar is too large" 400을 내고(실측),
+// 컴파일할 때 경우의 수가 곱해져 "compiled grammar is too large" 400을 내고,
 // OpenAI strict 모드는 아예 모든 키가 required여야 한다. 값을 안 쓸 땐 null을 받는다.
 public final class StrictJsonSchema {
 

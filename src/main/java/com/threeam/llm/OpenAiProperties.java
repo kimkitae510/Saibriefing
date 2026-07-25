@@ -13,8 +13,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "llm.openai")
 public class OpenAiProperties {
 
-    // 100만 토큰당 USD [신규입력, 캐시입력, 출력]
-    // sol은 프로모션가(2026-08-23 인하, 최소 11-21까지) — 종료 후 5.0/0.5/30.0 재확인.
+    // 100만 토큰당 USD [신규입력, 캐시입력, 출력]. 공개 요금표의 표준 처리, 짧은 문맥 기준.
+    // 할인가가 섞여 있어 요금이 바뀌면 다시 확인한다.
     private static final Map<String, double[]> PRICES = Map.of(
             "gpt-5.6-sol", new double[] {4.0, 0.4, 20.0},
             "gpt-5.6", new double[] {4.0, 0.4, 20.0},
@@ -27,15 +27,14 @@ public class OpenAiProperties {
     private String readingModel = "";
 
     // 결정 호출 전용 모델(선택). 비우면 판독 모델을 그대로 쓴다 — 결정은 재료가 다 차려진
-    // 압축 작업이라 더 싼 모델로도 되는지 실험하는 스위치다.
+    // 압축 작업이라 더 싼 모델을 따로 배정할 수 있다.
     private String decisionModel = "";
 
     public String effectiveDecisionModel() {
         return decisionModel == null || decisionModel.isBlank() ? readingModel : decisionModel;
     }
 
-    // 판정 호출 전용 모델(선택). 비우면 판독 모델을 그대로 쓴다 — 판정의 실행력이
-    // 모델 능력에 달렸는지 가르는 실험 스위치다.
+    // 판정 호출 전용 모델(선택). 비우면 판독 모델을 그대로 쓴다.
     private String verdictModel = "";
 
     public String effectiveVerdictModel() {
@@ -43,7 +42,7 @@ public class OpenAiProperties {
     }
 
     // 탐색 채팅 전용 모델(선택). 비우면 채팅은 이 경로를 타지 않고 llm.provider 쪽(LlmClient)으로 돈다 —
-    // 채팅은 싼 모델(luna)로, 판독은 강한 모델로 가르는 스위치다.
+    // 채팅은 싼 모델로, 판독은 강한 모델로 가르는 스위치다.
     private String chatModel = "";
 
     public boolean chatEnabled() {
@@ -60,15 +59,15 @@ public class OpenAiProperties {
     // 아예 없을 때만). 비우면 파라미터를 보내지 않는다.
     private String reasoningEffort = "low";
 
-    // 채팅 전용 추론 강도. 판독을 medium으로 올려도 채팅은 low에 묶어둔다 — 대화는 추론이 아니라
-    // 반응이라 올려도 나아지지 않고, 턴이 잦아 추론 토큰이 곧 비용이다. 비우면 공통 설정을 따른다.
+    // 채팅 전용 추론 강도. 턴이 잦아 추론 토큰이 곧 비용이라 판독과 따로 low에 묶어둔다.
+    // 비우면 공통 설정을 따른다.
     private String chatReasoningEffort = "low";
 
     public String effectiveChatReasoningEffort() {
         return chatReasoningEffort == null || chatReasoningEffort.isBlank() ? reasoningEffort : chatReasoningEffort;
     }
 
-    // 웹 검색 도구 호출 1건당 USD(요금 페이지 "Web search: $10.00 / 1k calls", 2026-09-17). 검색 결과 본문은
+    // 웹 검색 도구 호출 1건당 USD(요금 페이지 기준 1천 건당 $10). 검색 결과 본문은
     // 모델 단가로 입력 토큰에 따로 잡힌다. 0이면 계산을 건너뛴다.
     private double priceWebSearchCall = 0.01;
 

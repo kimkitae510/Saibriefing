@@ -33,9 +33,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class MessageTxService {
 
-    // 마크다운 강조(**), 제목(#) 기호. 결론 강조용으로 굵기를 허용해봤다가 걷었다(굵기 없이
-    // 문장 분리로 충분했다) — 프롬프트만 빼면 모델이 흘린 **가 무작위로 렌더링되므로 저장 전에
-    // 걷는다. 기록에 남으면 다음 턴 프롬프트에 실려 모델이 같은 형식을 이어가는 문제도 그대로다.
+    // 마크다운 강조(**), 제목(#) 기호. 모델이 흘린 기호가 화면에 그대로 찍히고, 기록에 남으면
+    // 다음 턴 프롬프트에 실려 같은 형식이 이어지므로 저장 전에 걷는다.
     private static final Pattern MARKDOWN_MARKS =
             Pattern.compile("\\*\\*|^#{1,6}\\s+", Pattern.MULTILINE);
 
@@ -198,8 +197,7 @@ public class MessageTxService {
         if (knowledge != null) {
             prompt.add(ChatMessage.system(knowledge));
         }
-        // 답의 모양은 규칙으로 못 가르치고 본 것으로 배운다. 예시는 상담자가 이미 한 턴으로 싣는다 —
-        // 시스템 글로 넣으면 설명서로 읽고 틀만 베꼈다(실측). 고정분이라 페르소나 뒤(캐시 구간).
+        // 예시는 상담자가 이미 한 턴(user/assistant 쌍)으로 싣는다. 고정분이라 페르소나 뒤(캐시 구간).
         List<ChatPersonaProperties.Example> examples = personaProperties.getExamples();
         if (examples != null) {
             boolean any = false;
@@ -213,7 +211,6 @@ public class MessageTxService {
                 }
                 prompt.add(ChatMessage.user(example.getUser().strip()));
                 prompt.add(ChatMessage.assistant(example.getAssistant().strip()));
-                // 왜 이 답인지를 답 바로 뒤에 붙인다. 모양만 보면 어미와 문형을 베끼고, 이유가 있어야 다른 사연에 옮긴다.
                 String why = example.getWhy();
                 if (why != null && !why.isBlank()) {
                     prompt.add(ChatMessage.system(why.strip()));
@@ -225,8 +222,7 @@ public class MessageTxService {
                 prompt.add(ChatMessage.system(note.strip()));
             }
         }
-        // 폼으로 받은 기본 정보. 이야기가 시작되기 전의 바탕이라 대화보다 앞이다. 구획 이름 없이
-        // 줄만 싣는다 — 모델을 틀로 통제할수록 답이 틀을 닮아간다.
+        // 폼으로 받은 기본 정보. 이야기가 시작되기 전의 바탕이라 대화보다 앞이다.
         storyIntakeRepository.findByStoryId(storyId)
                 .map(StoryIntakeService::describe)
                 .filter(block -> block != null && !block.isBlank())
@@ -241,8 +237,8 @@ public class MessageTxService {
             prompt.add(ChatMessage.system(String.join("\n", userFacts)));
         }
         List<Message> transcript = messageRepository.findByStoryIdOrderByIdAsc(storyId);
-        // 목표는 유저가 한 번이라도 말한 뒤부터 싣는다. 이야기가 하나도 없는 첫 턴에 물을 목록만 주면
-        // 상담자가 첫 말부터 목록을 집어 묻고, 사연자는 하고 싶던 이야기를 꺼낼 자리를 잃는다(실측).
+        // 목표는 유저가 한 번이라도 말한 뒤부터 싣는다. 첫 턴에 물을 목록만 주면 상담자가 목록부터
+        // 묻고, 사연자는 하고 싶던 이야기를 꺼낼 자리를 잃는다.
         long userTurns = transcript.stream().filter(m -> m.getRole() == MessageRole.USER).count();
         String goalBlock = userTurns > 0 ? goalBlock(goals, userTurns) : null;
         if (goalBlock != null) {
@@ -250,8 +246,8 @@ public class MessageTxService {
         }
         // 대화 전체를 시간순으로, 역할 그대로. 창을 두지 않는다 — 대화는 시간 상한으로 짧게
         // 유지되고, 잘라 보내면 상담자가 앞에서 들은 것을 다시 묻는다.
-        // 유저가 말하기 전의 상담자 메시지(첫 말 대본)는 뺀다. 화면엔 나가지만 모델이 그 문체와
-        // "질문이 이어진다"는 선언을 자기 앞 턴으로 읽고 따라간다(실측) — 대본은 모델의 말이 아니다.
+        // 유저가 말하기 전의 상담자 메시지(첫 말 대본)는 뺀다. 화면엔 나가지만 대본은 모델의 말이
+        // 아니라, 실으면 모델이 그 문체를 자기 앞 턴으로 읽고 따라간다.
         boolean userStarted = false;
         for (Message message : transcript) {
             if (message.getRole() == MessageRole.USER) {

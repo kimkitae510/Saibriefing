@@ -18,7 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-// 탐색 채팅의 목표가 어디까지 찼는지를 가른다. 답변 호출과 따로 두는 이유는 판독 쪽 실측과 같다 —
+// 탐색 채팅의 목표가 어디까지 찼는지를 가른다. 답변 호출과 따로 두는 이유:
 // 산문이 본체인 호출에 구조화 출력을 섞으면 사고가 조각나고, 파싱 실패가 답변을 인질로 잡는다.
 // 매 턴 답변 전에 돈다: 방금 들어온 말이 무엇을 채웠는지 알아야 상담자가 같은 것을 다시 안 묻는다.
 // 실패는 답변을 막지 않는다 — 지금까지 저장된 상태로 답변이 나가고, 놓친 판정은 다음 턴이 다시 본다.

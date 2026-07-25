@@ -96,7 +96,7 @@ public class AssessmentTxService {
     private static final Duration FAIL_RETRY_COOLDOWN = Duration.ofMinutes(3);
 
     // 분석 실패 재시도 가드: 실패는 후차감(미차감)이라, 같은 재료가 계속 같은 이유로 실패하면
-    // 무한 무료 LLM 호출이 된다(실측). 같은 재료 연속 2회 실패면 새 대화나 쿨다운 전까지 거부.
+    // 무한 무료 LLM 호출이 된다. 같은 재료 연속 2회 실패면 새 대화나 쿨다운 전까지 거부.
     // 반환값은 재시도까지 남은 초 — 0이면 차단 아님. 화면의 카운트다운이 이 값을 쓴다.
     @Transactional(readOnly = true)
     public int assessFailRetryBlockedSeconds(Long storyId) {
@@ -156,12 +156,9 @@ public class AssessmentTxService {
 
         // 대화 전체를 시간순으로, 양쪽 역할 다. 창(window)을 두지 않는다 — 대화는 시간 상한으로 짧다.
         // 상담자 발화도 싣는다: 탐색 채팅의 유저 답은 "응", "그때 한 번"처럼 짧아서 상담자의 질문이
-        // 없으면 무엇에 대한 답인지가 사라진다(실측 592). 상담자는 장면 하나가 무엇을 뜻하는지까지는
-        // 의견을 내므로(2026-09-23부터) 그 해석이 사연으로 둔갑하지 않게 reading.yml이 "상담자의
-        // 해석은 근거가 아니다"로 받는다. 역할을 (상담자)/(사연자)로 표시해 판독이 누구 말인지 가려 읽게 한다.
-        // 각 발화 앞에 작성일을 박는다 — 사연 속 "일주일째 연락 없다" 같은 상대 시간 표현은
-        // 그 말을 한 날 기준이라, 날짜 없이 주입하면 판독이 몇 달 전 상태를 지금으로 읽는다(실측 619:
-        // 7개월 경과를 못 읽음). 오늘 날짜(todayLine)와 짝이 되어야 경과 계산이 성립한다.
+        // 없으면 무엇에 대한 답인지가 사라진다. 역할을 (상담자)/(사연자)로 표시해 누구 말인지 가려 읽게 한다.
+        // 각 발화 앞에 작성일을 박는다 — "일주일째 연락 없다" 같은 상대 시간 표현은 그 말을 한 날
+        // 기준이라 날짜가 없으면 몇 달 전 상태를 지금으로 읽는다. 오늘 날짜(todayLine)와 짝이 되어야 경과 계산이 성립한다.
         List<ChatMessage> conversation = new ArrayList<>();
         for (Message message : messageRepository.findByStoryIdOrderByIdAsc(storyId)) {
             if (message.isFallback()) {
@@ -203,7 +200,7 @@ public class AssessmentTxService {
 
     // 루브릭 시간 규칙(5주/3개월, 소진형 1개월)의 기준점. 원장 기록일 추정에 맡기지 않고 명시한다.
     // 개발 플래그(today-from-story)면 마지막 발화일 — 옛 사연 재실행에서 날짜 차이가 글에 새는 것을 막는다.
-    // 사연 작성일로 잡으면 그 뒤에 온 발화(8/24)가 "오늘" 뒤 날짜가 되어 판독이 시간 모순을 본문에 쓴다(실측 594).
+    // 사연 작성일로 잡으면 그 뒤에 온 발화가 "오늘" 뒤 날짜가 되어 시간 모순이 생긴다.
     private String todayLine(Story story) {
         LocalDate today = LocalDate.now();
         if (readingProperties != null && readingProperties.isTodayFromStory()) {
@@ -225,8 +222,7 @@ public class AssessmentTxService {
     // 직전 분석 요지 — 새 사실 없이 유형이 분석마다 흔들리는 것을 막는 앵커.
     // 판정값만 싣는다(근거, 총평 제외) — 지난 판단의 서사까지 주면 반향실이 된다.
     // 유형이 없어도 점프 판이면 싣는다 — 유저 통보 판은 설계상 유형이 비는데, 유형 없음만으로
-    // 앵커를 버리면 제일 흔들리는 판(미련 뚜렷/흔적 경계)이 매번 백지 재판정된다
-    // (질문 한 줄 보태고 재분석했더니 +10 실측). v1 데이터(둘 다 없음)나 잠금 판정이면 null.
+    // 앵커를 버리면 제일 흔들리는 판이 매번 백지 재판정된다. v1 데이터(둘 다 없음)나 잠금 판정이면 null.
     private String previousDigest(Assessment last) {
         if (last == null) {
             return null;
@@ -309,7 +305,7 @@ public class AssessmentTxService {
 
     // tx3: 정밀 판독 저장 + 뷰 조립. 판정과 별도 트랜잭션 — 판독 2호출이 실패해도
     // 판정은 이미 커밋돼 있고, 화면은 판정만으로도 성립한다.
-    // 본문은 스토리북 산출물 JSON 통짜, state 4개만 컬럼(골든셋 회귀용).
+    // 본문은 스토리북 산출물 JSON 통짜, state 4개만 컬럼(회귀 비교용).
     // base(직전 확률 판정)는 변동내역의 비교 기준 — 저장은 참조 id만 하고 델타는 조회 때 계산한다.
     @Transactional
     public AssessmentResponse.Reading saveReading(Long storyId, Long assessmentId,
@@ -351,7 +347,7 @@ public class AssessmentTxService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
         // 잠금 판정은 연달아 쌓인다 — 번복하고 재분석했는데 또 잠금이 나오는 경로가 있다.
         // 최신 하나만 지우면 바로 아래 잠금이 올라와 화면이 그대로라 아무 일도 안 일어난
-        // 것처럼 보인다(실측). 최신부터 이어지는 잠금 판정을 한 번에 다 걷어낸다.
+        // 것처럼 보인다. 최신부터 이어지는 잠금 판정을 한 번에 다 걷어낸다.
         List<Assessment> all = assessmentRepository.findByStoryIdOrderByCreatedAtDesc(storyId);
         List<Assessment> locks = new ArrayList<>();
         for (Assessment a : all) {

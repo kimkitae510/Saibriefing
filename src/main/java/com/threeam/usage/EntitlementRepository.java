@@ -41,7 +41,7 @@ public interface EntitlementRepository extends JpaRepository<Entitlement, Long> 
 
     // flushAutomatically가 필수 — 취소 반영 흐름은 같은 트랜잭션에서 결제 엔티티를 먼저 수정한 뒤
     // 이 쿼리를 부른다. flush 없이 clear만 하면 아직 안 쓰인 결제 상태 변경(CANCELED)이
-    // 영속성 컨텍스트와 함께 증발한다(실측: 응답은 CANCELED인데 DB는 CANCEL_REQUESTED로 남음).
+    // 영속성 컨텍스트와 함께 증발한다.
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update Entitlement e set e.revokedAt = :at where e.id = :id and e.revokedAt is null")
     int revoke(@Param("id") Long id, @Param("at") LocalDateTime at);

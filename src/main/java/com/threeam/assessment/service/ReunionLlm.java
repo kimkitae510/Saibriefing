@@ -75,8 +75,7 @@ public class ReunionLlm {
             prompt.add(ChatMessage.system(intakeBlock));
         }
         prompt.addAll(conversation);
-        // 루브릭 깊숙한 규칙은 긴 프롬프트에서 자주 무시된다(v1 실측: 관점 뒤집힘, 이중 계상이
-        // 규칙 신설 후에도 재발). 제일 잘 어기는 것만 프롬프트 맨 끝에 출력 직전 점검으로 다시 박는다.
+        // 긴 프롬프트 깊숙한 규칙은 놓치기 쉬워, 출력 직전 점검을 프롬프트 맨 끝에 한 번 더 둔다.
         // 점검 문구도 서비스 자산이라 코드에 두지 않는다 — rubric.yml(로컬)에서 주입한다.
         String finalCheck = assessmentProperties.getFinalCheck();
         if (finalCheck != null && !finalCheck.isBlank()) {
@@ -84,7 +83,7 @@ public class ReunionLlm {
         }
         // 분석은 긴 루브릭 일관 적용이 필요해 정밀 판단 경로로 — 설정에 따라 더 강한 모델이 배정된다.
         // 파싱 실패의 자동 재시도는 없다 — temperature 0의 즉시 재시도는 같은 실패를 재생산하고
-        // 분석 1회분이 소리 없이 2배 과금된다(v1 실측). 재시도는 유저 버튼, 반복 실패는 쿨다운 가드.
+        // 분석 1회분이 소리 없이 2배 과금된다. 재시도는 유저 버튼, 반복 실패는 쿨다운 가드.
         return llmClient.generateJsonDeep(prompt, RESPONSE_SCHEMA).thenApply(this::parse);
     }
 
@@ -129,10 +128,9 @@ public class ReunionLlm {
 
     // 관계 심리(확률과 무관한 이해용 층)의 스키마. 라벨을 enum으로 못 박아 사전 밖 어휘를
     // 생성 단계에서 차단한다.
-    // nullable로 두지 않고 전부 required로 강제한다 — nullable 객체는 모델이 절차에서
-    // 빠지는 순간 조용히 생략하는 게 실측됐다(matchProfile이 v2 전환 직후 통째로 비어
-    // 나온 것과 같은 자리). 판단이 안 서는 판의 탈출구는 '필드 생략'이 아니라 라벨
-    // 자체다(판단보류, 뚜렷하지않음) — 그래야 "못 읽었다"와 "안 냈다"가 구분된다.
+    // nullable로 두지 않고 전부 required로 강제한다 — nullable 객체는 모델이 조용히 생략할 수 있다.
+    // 판단이 안 서는 판의 탈출구는 '필드 생략'이 아니라 라벨 자체다(판단보류, 뚜렷하지않음)
+    // — 그래야 "못 읽었다"와 "안 냈다"가 구분된다.
     private static Map<String, Object> attachmentStyleSchema() {
         return Map.of(
                 "type", "OBJECT",
@@ -182,9 +180,8 @@ public class ReunionLlm {
     // 매칭 분류의 스키마. 어휘를 enum으로 못 박는 게 핵심 — 자유 서술을 허용하면
     // "여사친 문제"처럼 뜻은 같고 글자가 다른 값이 나와 사례의 태그와 안 겹친다.
     private static Map<String, Object> matchProfileSchema() {
-        // nullable을 두지 않는다 — v2 전환 후 모델이 이 필드만 조용히 null로 내는 게 실측됐다
-        // (프롬프트 지시 보강으로도 재발). 객체 생성을 스키마로 강제하고, 내부 필드가 전부
-        // 비면 파서가 null로 접는다(잠금 판정, 정보 없음 케이스는 그 경로로 처리된다).
+        // nullable을 두지 않는다 — 선택 필드면 모델이 조용히 null로 낼 수 있다. 객체 생성을 스키마로
+        // 강제하고, 내부 필드가 전부 비면 파서가 null로 접는다(잠금 판정, 정보 없음 케이스는 그 경로로 처리된다).
         return Map.ofEntries(
                 Map.entry("type", "OBJECT"),
                 Map.entry("properties", Map.ofEntries(
@@ -308,9 +305,8 @@ public class ReunionLlm {
                         "fact", Map.of("type", "STRING"),
                         "quote", Map.of("type", "STRING", "nullable", true),
                         "timing", Map.of("type", "STRING", "nullable", true)),
-                // quote/timing을 required에 올린다(nullable 유지 — 없으면 null). 루브릭이
-                // "반드시 보존"이라 지시해도 선택 필드면 안 쓰는 게 실측됐다(12회 중 12회 0).
-                // required면 fact마다 "인용할 원문이 있는가"를 한 번은 지나가게 된다.
+                // quote/timing을 required에 올린다(nullable 유지 — 없으면 null). 선택 필드면 건너뛰기 쉬워,
+                // required로 둬 fact마다 "인용할 원문이 있는가"를 한 번은 지나가게 한다.
                 "required", List.of("actor", "kind", "fact", "quote", "timing"),
                 "propertyOrdering", List.of("actor", "kind", "fact", "quote", "timing"));
     }

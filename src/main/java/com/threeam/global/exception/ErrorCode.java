@@ -45,7 +45,7 @@ public enum ErrorCode {
     LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "A005", "이메일 또는 비밀번호가 올바르지 않습니다."),
     LOGIN_LOCKED(HttpStatus.TOO_MANY_REQUESTS, "A006", "로그인 시도가 너무 많습니다. 15분 후에 다시 시도해 주세요."),
     OAUTH_FAILED(HttpStatus.BAD_GATEWAY, "A007", "소셜 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요."),
-    // 사용자 확정 정책: 소셜 이메일이 기존 계정과 겹치면 통합하지 않고 거부 안내(계정 탈취 여지 차단)
+    // 정책: 소셜 이메일이 기존 계정과 겹치면 통합하지 않고 거부 안내(계정 탈취 여지 차단)
     OAUTH_EMAIL_CONFLICT(HttpStatus.CONFLICT, "A008", "이미 가입된 이메일입니다. 기존 방법으로 로그인해 주세요."),
     OAUTH_WITHDRAWN_ACCOUNT(HttpStatus.FORBIDDEN, "A009", "탈퇴한 계정입니다. 같은 소셜 계정으로는 다시 가입할 수 없습니다."),
     SOCIAL_ACCOUNT_NO_PASSWORD(HttpStatus.BAD_REQUEST, "A010", "소셜 로그인으로 가입한 계정은 비밀번호가 없습니다."),

@@ -4,9 +4,8 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-// 정밀 판독(2호출) 지시 전문. 추론 원칙, 네 질문의 경계, 반대 증거 규칙 등 판독 노하우는
-// 서비스 자산이라 저장소에 올리지 않고 로컬 reading.yml(gitignore)로 주입한다. rubric.yml과 같은 방식.
-// 여기 기본값은 자리표시자 — 로컬 파일이 없으면 서비스는 뜨지만 판독 품질은 크게 떨어진다.
+// 판정 지시문과 호출 설정. 지시 전문은 서비스 자산이라 저장소에 두지 않고 로컬 reading.yml(gitignore)로 주입한다.
+// 여기 기본값은 전부 빈 값이다 — 파일이 없으면 서비스는 뜨지만 판정 품질은 크게 떨어진다(PromptFilesCheck가 알린다).
 @Getter
 @Setter
 @ConfigurationProperties(prefix = "llm.reading")
@@ -32,20 +31,16 @@ public class ReadingProperties {
     // 원석이 그 그림을 알고 쓰이게 한다. 비어 있으면 코드의 한 줄(전문가 선언)만 쓴다.
     private String analysisGuide = "";
 
-    // 분석 참고 지식(reading.yml knowledge) — 헌법(analysisGuide) 뒤에 [참고 지식]으로 이어
-    // 붙인다. 지시와 지식을 한 몸으로 두면 지식 문장이 문항으로 읽혀 원석이 답안지가 되는
-    // 실측(2026-09-07)의 분리. 비어 있으면 헌법만 간다.
+    // 판정 참고 지식. 지시 뒤에 별도 구획으로 붙인다 — 한 덩어리로 두면 지식 문장이 지시로 읽힌다.
     private String knowledge = "";
 
-    // 지식 파일 경로(reading.yml knowledge-file) — 있으면 그 파일 전문을 knowledge 대신 붙인다.
-    // 판독심리근거.md 4만 자를 통째로 넣어 보는 실험(2026-09-14)용. 비우면 knowledge만.
+    // 지식 파일 경로. 있으면 그 파일 전문을 knowledge 대신 붙인다.
     private String knowledgeFile = "";
 
     // 분석 호출의 유저 차례 물음(reading.yml analysis-ask). 비우면 사연만 보낸다. 기본값은 예전 상수.
     private String analysisAsk = "그 사람 쪽에서 무슨 일이 있었는지 써라.";
 
-    // 분석 호출만 다른 모델로 돌리는 실험 스위치(openai 경로). 비우면 판독 모델(sol). 등급 매퍼와
-    // 분류는 그대로 판독 모델이라, 글만 바꿔 보고 나머지 비교가 흔들리지 않는다(2026-09-08).
+    // openai 경로의 판정 모델. 비우면 클라이언트 기본 판독 모델.
     private String analysisModel = "";
     // 분석 호출에 웹 검색 도구를 붙인다(Responses API). 판단 기준을 내장 지식 대신 검색으로 확인해 보는
     // 2단계 실험(2026-09-17). 검색은 건당 요금이 따로 붙는다 — OpenAiProperties.priceWebSearchCall.
@@ -60,11 +55,11 @@ public class ReadingProperties {
     private String judgementGuide = "";
     // B 모델 — 비우면 판독 모델.
     private String judgementModel = "";
-    // B에 웹 검색 도구를 붙인다(Responses API). A는 검색을 켜도 질이 같아 끄고(2026-09-17 실측), 검색은 B만.
+    // B에 웹 검색 도구를 붙인다(Responses API). 검색은 건당 요금이 따로 붙는다.
     private boolean judgementWebSearch = true;
     private String judgementWebSearchContext = "medium";
     private int judgementWebSearchMaxCalls = 5;
-    // B만 추론 강도를 따로(none/low/medium/high/xhigh). 비우면 공통 reasoning-effort(low).
+    // B만 추론 강도를 따로. 비우면 공통 기본값.
     private String judgementReasoningEffort = "";
     // A(분석)만 추론 강도를 따로. B를 비운 판(112판)에서는 A가 글 끝에서 등급까지 고르는데, 그 일을
     // 공통 기본값 low로 하면 같은 사연이 판마다 두 칸씩 오간다(2026-09-20 실측).

@@ -122,9 +122,7 @@ class CaseScorerTest {
     @Test
     @DisplayName("소재가 같은 사례가 이긴다 — 범용 태그(거짓말신뢰)만 겹치는 사례를 대분류 교차가 넘는다")
     void concreteTopicOutranksGenericTagMatch() {
-        // 실측: 랜챗 은닉으로 차인 사연에 코인 은닉 파혼 사례가 최상위로 왔다.
-        // 유저는 본인과실로 잡혔고 소개팅앱 태그를 함께 실었는데, 대분류가 갈려 30점을 잃고
-        // 범용 태그 주-주 일치 50점이 코인 사례를 밀어 올렸다.
+        // 대분류가 갈려 30점을 잃은 쪽이 범용 태그 주-주 일치만 겹친 사례에 밀리면 안 된다.
         StoryMatchProfile mine = StoryMatchProfile.builder()
                 .storyId(1L).reason("본인과실").subReasons("거짓말신뢰,소개팅앱,감정쓰레기통")
                 .dumper("상대").fault("나").contactState("차단").build();
@@ -173,8 +171,7 @@ class CaseScorerTest {
         assertThat(scorer.score(mine, near)).isGreaterThan(scorer.score(mine, far));
     }
 
-    // 무다툼 200일 사연에 상습 온오프 사례가 붙은 실측(매칭오판 5). 감정누적이 잦은싸움 갈래에
-    // 있던 탓에, 싸운 적 없는 사연이 그 태그 하나로 싸움 이별 계열이 됐다.
+    // 감정누적이 잦은싸움 갈래에 있으면, 싸운 적 없는 사연이 그 태그 하나로 싸움 이별 계열이 된다.
     @Test
     @DisplayName("감정누적은 범용이라 잦은싸움 사례를 끌어올리지 못한다")
     void accumulatedFeelingIsGeneric() {
@@ -187,8 +184,8 @@ class CaseScorerTest {
         assertThat(avoidCase).isGreaterThan(fightCase);
     }
 
-    // 상대에게 새 연인이 있는 판에 그 장벽이 없던 사례가 올라왔다(실측). 사유가 같아도
-    // 넘어야 할 조건이 하나 더 있는 판이라 같은 처지의 사례가 먼저 와야 한다.
+    // 상대에게 새 연인이 있는 판은 사유가 같아도 넘어야 할 조건이 하나 더 있어,
+    // 같은 처지의 사례가 먼저 와야 한다.
     @Test
     @DisplayName("상대에게 새 사람이 있으면 같은 처지의 사례가 위로 온다")
     void partnerHasNewLiftsSameSituation() {

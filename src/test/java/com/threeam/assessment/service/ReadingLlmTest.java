@@ -1057,7 +1057,7 @@ class ReadingLlmTest {
                 "새 문장 하나. 새 문장 둘.", "가 나다. 라 마.")).isFalse();
     }
 
-    // 헌법과 참고 지식은 한 시스템 메시지에 순서대로 — 지식이 헌법 앞이나 따로 가면 지시로 읽힌다.
+    // 혼잣말 질문 머리(30자 넘음)도 이름 칸으로 갈라져야 한다.
     @Test
     @DisplayName("분석 호출: 참고 지식은 헌법 뒤에 [참고 지식]으로 붙고, 비어 있으면 헌법만 간다")
     void analysisCall_appendsKnowledgeAfterGuide() {
@@ -1094,8 +1094,7 @@ class ReadingLlmTest {
         assertThat(again.getAllValues().get(0).get(0).content()).isEqualTo("헌법 본문");
     }
 
-    // 정리표는 분류 호출이 내고 서버가 원석에 [재회 정리]로 적은 뒤 Decision.summary로 다시 읽는다.
-    // 분류 호출은 등급 줄을 받아야 "지금 이 등급인 이유"를 쓸 수 있다.
+    // 질문 줄은 떼고 이름을 카드 제목으로 — 질문이 따로 줄에 오든, 이름 앞에 붙어 오든.
     @Test
     @DisplayName("분류 호출의 정리표가 원석에 적히고 Decision.summary로 읽히며, 분류 프롬프트에 등급 줄이 실린다")
     void cardCall_summaryTable() {

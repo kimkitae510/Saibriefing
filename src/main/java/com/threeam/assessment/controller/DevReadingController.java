@@ -32,9 +32,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.yaml.snakeyaml.Yaml;
 
-// 개발용 — 저장된 판독의 원석(분석 원문)만 가지고 분류 호출(luna)을 다시 돌린다. 분석(sol)을
-// 다시 사지 않고 card-guide를 고쳐 가며 라벨, 이름, 책갈피만 볼 수 있다(2026-09-08).
-// llm.reading.dev-endpoints=true(로컬 reading.yml)일 때만 뜨고, 루프백에서 온 요청만 받는다.
+// 개발용 — 저장된 사연으로 판정을 다시 돌려 본문만 돌려준다. 저장하지 않는다.
+// 스위치가 서버로 올라가는 지시문 파일 안에 있어서 운영 프로필에서는 값과 무관하게 아예 안 뜨게 묶는다.
 @Slf4j
 @RestController
 @RequestMapping("/api/dev")
@@ -68,6 +67,7 @@ public class DevReadingController {
         AssessmentReading reading = readingRepository.findById(assessmentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ASSESSMENT_NOT_FOUND));
         Story story = storyRepository.findByIdAndDeletedAtIsNull(assessment.getStoryId())
+
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORY_NOT_FOUND));
         String raw;
         try {
@@ -79,7 +79,6 @@ public class DevReadingController {
         return readingLlm.reclassify(raw, context.intakeBlock(), context.todayLine(),
                 context.conversation().stream().map(ChatMessage::content).toList());
     }
-
     // sol을 다시 부른다 — reclassify는 저장된 본문을 재파싱만 해서, 분류 호출이 꺼진 뒤로는 헌법을 바꿔도
     // 같은 글이 되돌아온다(2026-09-15 실측). 저장하지 않고 본문만 돌려준다.
     @PostMapping(value = "/reread/{assessmentId}", produces = MediaType.TEXT_PLAIN_VALUE)
@@ -101,7 +100,6 @@ public class DevReadingController {
                         context.conversation().stream().map(ChatMessage::content).toList())
                 .thenApply(direct -> direct.draft() == null ? "" : direct.draft().synthesis());
     }
-
     @SuppressWarnings("unchecked")
     private void reloadGuides() {
         try (FileInputStream in = new FileInputStream("reading.yml")) {

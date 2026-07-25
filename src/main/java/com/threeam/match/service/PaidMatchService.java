@@ -77,7 +77,7 @@ public class PaidMatchService {
             }
 
             // loadContext가 아니라 이걸 쓴다 — loadContext에는 재분석 가드가 들어 있어서
-            // "마지막 분석 이후 새 이야기가 없다"로 매칭까지 막혔다(실측). 매칭은 이미 나온
+            // "마지막 분석 이후 새 이야기가 없다"로 매칭까지 막힌다. 매칭은 이미 나온
             // 진단에 붙는 일이라 새 대화를 요구할 이유가 없다.
             List<ChatMessage> conversation = assessmentTxService.loadConversation(userId, storyId);
             return matchLlm.select(material.digest(), conversation, pool, band)

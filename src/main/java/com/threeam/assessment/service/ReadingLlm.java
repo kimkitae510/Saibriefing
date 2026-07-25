@@ -22,13 +22,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-// 정밀 판독(2호출) 담당 — v11.1 계약.
-// 진단 문장은 1호출이 확정한다. 판독은 그걸 복사만 하고, 서버는 아예 입력값으로 되돌려
-// 병합한다(복사도 안 믿는다 — 모델이 한 글자라도 고치면 화면과 판정이 갈린다).
-// 판독이 실제로 쓰는 것은 심층 장, 행동 계획, 후속 칩이다.
-// 입력(ReadingPacket)에 요인표, 점프, 관계심리 판정값은 싣지 않는다 — 전부 넘기면
-// 2호출이 요인표를 자연어로 복창하는 경향이 실측됐다.
-// 판독 지시 전문은 서비스 자산이라 소스에 두지 않고 ReadingProperties(로컬 reading.yml)로 주입받는다.
+// 재회 판정 호출과 조립. 판정은 글 한 편으로 받고, 코드는 마지막 등급 줄과 [표식] 칸만 읽는다.
+// 지시 전문은 서비스 자산이라 소스에 두지 않고 ReadingProperties(로컬 reading.yml)로 주입받는다.
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -155,7 +150,7 @@ public class ReadingLlm {
         return guide != null && !guide.isBlank();
     }
 
-    // A — 분석 원석(표식 정리 전). 작업 경로가 이 텍스트를 그대로 저장한다.
+    // A — 판정 글. 작업 경로가 이 텍스트를 그대로 저장한다.
     public CompletableFuture<String> analysisText(String intakeBlock, String todayLine,
                                                   List<String> userMessages) {
         String story = storyBlock(intakeBlock, todayLine, userMessages);
@@ -168,10 +163,6 @@ public class ReadingLlm {
         if (knowledge != null && !knowledge.isBlank()) {
             analysisSystem = analysisSystem + "\n\n[재회 판단의 기준]\n" + knowledge;
         }
-        // 등급 잣대는 sol에게도 — sol이 [가능성 등급]을 고르는 판(2026-09-11)에서 잣대 없이 고르면
-        // 같은 사연이 판마다 MID와 HIGH를 오갔다. 잣대는 우리가 정하고 고르는 것은 모델이 한다.
-        // 다섯 등급의 정의만 준다 — 잣대 머리말(무접촉 해석, 근거 없음의 취급)은 분류 호출용 목줄이라
-        // sol에게 가면 본문이 그 문장을 읊고 판단을 피한다(2026-09-11 실측: 593 변호 문단, 5년 MID).
         String gradeGuide = gradeDefinitions(readingProperties.getGradeGuide());
         if (gradeGuide != null && !gradeGuide.isBlank()) {
             analysisSystem = analysisSystem + "\n\n[등급 잣대]\n" + gradeGuide;
@@ -191,6 +182,7 @@ public class ReadingLlm {
                                                    List<String> userMessages) {
         List<ChatMessage> prompt = new ArrayList<>();
         prompt.add(ChatMessage.system(readingProperties.getJudgementGuide()));
+    // 날짜만 주고 용도를 사연 속 시간 표현의 기준으로 정한다 — 계산 지시까지 실으면 날수를 세어 본문에 쓴다.
         prompt.add(ChatMessage.user(storyBlock(intakeBlock, todayLine, userMessages)));
         return judgementCall(prompt).thenApply(json -> {
             dumpJudgementRawQuietly(json);
@@ -199,8 +191,7 @@ public class ReadingLlm {
     }
 
     private CompletableFuture<String> judgementCall(List<ChatMessage> prompt) {
-        // 지시가 JSON을 말하지 않으면 자유 산문 — 모델이 어떻게 쓰는지 보는 시험(2026-09-18, 사장님 "일단 이러지 말고
-        // 한번 보자"). 산문은 parseJudgement이 마지막 "판정 등급" 줄만 떼어 등급으로 읽고 나머지를 판정 글로 싣는다.
+        // 지시가 JSON을 말하지 않으면 자유 산문으로 받는다.
         Map<String, Object> schema = judgementFreeText() ? null : JUDGEMENT_SCHEMA;
         if ("openai".equalsIgnoreCase(readingProperties.getProvider())) {
             return readingProperties.isJudgementWebSearch()
@@ -254,7 +245,6 @@ public class ReadingLlm {
     // B의 응답 문법 — judgement-guide의 필드 설명과 1:1.
     public static final Map<String, Object> JUDGEMENT_SCHEMA = Map.ofEntries(
             Map.entry("type", "OBJECT"),
-            // 카드(기준, 상태, 근거) + 총평. 102~104판은 text 한 칸(판정 글)과 산문이었고 파서는 셋 다 읽는다(2026-09-18).
             Map.entry("properties", Map.of(
                     "name", Map.of("type", "STRING"),
                     "cards", Map.of("type", "ARRAY", "items", Map.ofEntries(

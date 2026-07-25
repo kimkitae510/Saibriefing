@@ -58,7 +58,7 @@ public class StoryIntake {
     // 시간을 갖는 중이면 시간을 갖기 시작한 뒤의 경과다(같은 칸을 쓴다 — 화면의 질문만 바뀐다).
     private Integer daysSinceBreakup;
 
-    // 헤어진 건지 시간을 갖는 건지. 이 칸이 없으면 상담자가 첫 턴에 기간과 연락 규칙을 되묻는다(실측).
+    // 헤어진 건지 시간을 갖는 건지. 이 칸이 없으면 상담자가 첫 턴에 기간과 연락 규칙을 되묻는다.
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.VARCHAR)
     @Column(length = 20)

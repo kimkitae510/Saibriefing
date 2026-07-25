@@ -5,7 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-// Anthropic(Claude) 호출 설정 — 정밀 판독 실험과 탐색 채팅 두 경로.
+// Anthropic(Claude) 호출 설정 — 정밀 판독과 탐색 채팅 두 경로.
 // LlmClient 전체 구현이 아니라 쓰는 경로만 든다(AnthropicMessagesClient). 진단(1호출)은 기존 프로바이더.
 @Getter
 @Setter
@@ -32,13 +32,12 @@ public class AnthropicProperties {
     // 탐색 채팅 모델. 비우면 채팅은 기존 경로(OpenAI 채팅 모델, 없으면 LLM_PROVIDER)로 돈다.
     private String chatModel = "";
 
-    // 채팅 추론 세기(output_config.effort). Haiku 5.5는 기본이 medium이라 명시해 둔다.
+    // 채팅 추론 세기(output_config.effort). 모델마다 기본값이 달라 명시해 둔다.
     private String chatEffort = "medium";
 
     private long chatTimeoutSeconds = 30;
 
-    // 긴 메시지만 받는 채팅 모델(예: Sonnet). 장면이 여럿 엮인 메시지에서 뭘 짚을지 고르는 건
-    // 기본 모델이 자주 빗나가고, 질문에 답한 짧은 메시지는 기본 모델도 비슷하게 받는다(실측).
+    // 긴 메시지만 받는 강한 채팅 모델. 여러 장면이 엮인 긴 메시지만 올려 보내 비용을 아낀다.
     // 비우면 전부 기본 채팅 모델로 간다.
     private String chatDeepModel = "";
 

@@ -200,7 +200,7 @@ class AssessmentTxServiceTest {
     void loadContext_buildsDigestForJumpOnlyAssessment() {
         givenOwnedStory();
         // 유저 통보 판은 설계상 breakupType이 null이고 jumpRule만 있다 — 이 판이야말로
-        // 뚜렷/흔적 경계가 흔들려서 앵커가 꼭 필요하다(질문 한 줄에 +10 실측).
+        // 경계가 흔들리기 쉬워 앵커가 꼭 필요하다.
         Assessment last = Assessment.builder()
                 .storyId(STORY_ID)
                 .verdict(ReunionVerdict.POSSIBLE)
@@ -270,7 +270,7 @@ class AssessmentTxServiceTest {
     }
 
     // 번복하고 재진단했는데 또 잠금이 나오면 잠금이 겹쳐 쌓인다. 하나만 지우면 바로 아래
-    // 잠금이 올라와 화면이 그대로라 아무 일도 안 일어난 것처럼 보인다(실측).
+    // 잠금이 올라와 화면이 그대로라 아무 일도 안 일어난 것처럼 보인다.
     @Test
     @DisplayName("헤어짐 확인 - 잠금 판정이 여러 개 쌓여 있으면 한 번에 다 걷어낸다")
     void confirmBreakup_clearsStackedLocks() {
@@ -377,7 +377,7 @@ class AssessmentTxServiceTest {
                 .willReturn(List.of());
     }
 
-    // 탐색 채팅의 유저 답은 짧아서 상담자의 질문 없이는 무엇에 대한 답인지가 사라진다(실측 592).
+    // 탐색 채팅의 유저 답은 짧아서 상담자의 질문 없이는 무엇에 대한 답인지가 사라진다.
     // 양쪽 역할을 시간순으로 다 싣되 누구 말인지 표시하고, 폴백(우리가 대신 낸 안내)은 뺀다.
     @Test
     @DisplayName("판독 입력 - 대화 전체를 시간순으로, 역할 표시와 날짜를 붙여 싣고 폴백은 뺀다")

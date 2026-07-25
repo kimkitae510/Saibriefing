@@ -21,26 +21,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-// OpenAI Chat Completions 호출 — 정밀 판독(2호출) 실험 전용 경로.
+// OpenAI 호출(Chat Completions, 웹 검색은 Responses API).
 // LLM_READING_PROVIDER=openai일 때 ReadingLlm이 기존 deep 호출 대신 이걸 탄다.
 //
-// 제미니가 임상어와 애착유형 라벨과 상대 속마음 창작을 강하게 하는 습성이 있어(맨몸 출력 실측),
-// 판독 지시의 상당 부분이 그 습성을 막는 방어 규칙으로 채워져 있었다. 그 방어물이 다시
-// 오염원이 되는 사고가 반복돼(금지 목록이 어휘를 가르치고, 인용이 출력으로 새고), 습성이
-// 다른 모델이면 지시를 크게 줄일 수 있는지 보려고 만든 경로다.
-//
-// 스트리밍은 쓰지 않는다. 첫 실험의 목적이 "얼마나 나오고 얼마 드는가"라, 응답 한 덩이와
-// usage를 함께 받는 쪽이 읽기 쉽다. 오래 걸려 끊기면 그때 스트림으로 바꾼다.
+// 스트리밍은 쓰지 않는다. 응답 한 덩이와 usage를 함께 받아 비용 로그를 바로 남긴다.
 @Slf4j
 @Component
 public class OpenAiResponsesClient {
 
     private static final String ENDPOINT = "https://api.openai.com/v1/chat/completions";
-    // 웹 검색 도구는 Responses API에만 붙는다(chat/completions에는 없음, 2026-09-17 문서).
+    // 웹 검색 도구는 Responses API에만 붙는다(chat/completions에는 없음).
     private static final String RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
     private static final java.util.regex.Pattern MD_LINK =
             java.util.regex.Pattern.compile("\\[([^\\]]+)\\]\\((https?://[^)]+)\\)");
-    // 링크를 걷어낸 뒤 남는 "(pmc.ncbi.nlm.nih.gov)" 꼴 출처 꼬리 — 본문에 도메인이 박힌다(2026-09-17 실측).
+    // 링크를 걷어낸 뒤 남는 "(pmc.ncbi.nlm.nih.gov)" 꼴 출처 꼬리 — 본문에 도메인이 박힌다.
     private static final java.util.regex.Pattern DOMAIN_TAIL =
             java.util.regex.Pattern.compile("\\s*\\((?:[a-z0-9-]+\\.)+[a-z]{2,}(?:/[^)\\s]*)?\\)");
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
@@ -124,8 +118,7 @@ public class OpenAiResponsesClient {
         return generate(messages, googleSchema, properties.effectiveDecisionModel(), kind);
     }
 
-    // 자유 산문 생성(1단 분석, 판정) — 스키마 없이 보낸다. 구조화 출력이 사고를 조각내
-    // 통찰을 누른다는 실측(2026-08-25)으로 만든 경로다. kind는 비용 로그 표기용.
+    // 자유 산문 생성(분석, 판정) — 스키마 없이 보낸다. kind는 비용 로그 표기용.
     public CompletableFuture<String> generateReadingText(List<ChatMessage> messages) {
         return generateReadingText(messages, "분석");
     }
@@ -134,7 +127,7 @@ public class OpenAiResponsesClient {
         return generate(messages, null, properties.getReadingModel(), kind);
     }
 
-    // 모델을 호출별로 바꿔 보는 실험용 — 비우면 판독 모델. 분석만 다른 모델(terra)로 돌려 보는 데 쓴다.
+    // 호출별로 모델을 바꾼다. 비우면 판독 모델.
     public CompletableFuture<String> generateReadingText(List<ChatMessage> messages, String kind,
                                                          String modelOverride) {
         return generateReadingText(messages, kind, modelOverride, null);
@@ -150,7 +143,7 @@ public class OpenAiResponsesClient {
     }
 
     // 자유 산문 + 웹 검색 도구(Responses API). 모델이 필요하다고 보면 검색하고 그 결과를 읽은 뒤 쓴다.
-    // 판독의 판단 기준을 모델 내장 지식 대신 검색으로 확인해 보는 실험 경로(2026-09-17, 2단계).
+    // 판단 기준을 모델 내장 지식 대신 검색으로 확인하는 경로.
     // 본문의 마크다운 인용 링크는 글자만 남기고, 검색 질의와 출처는 로그로 뺀다.
     public CompletableFuture<String> generateReadingTextWithSearch(List<ChatMessage> messages, String kind,
                                                                    String modelOverride, String contextSize,
@@ -288,7 +281,7 @@ public class OpenAiResponsesClient {
     }
 
     // stripCitations=false는 JSON 응답용 — 링크 정규식이 배열의 "["부터 인용의 "]"까지를 한 링크로 먹어
-    // JSON을 깨뜨린다(2026-09-17 실측, cards 배열이 객체로 변함). JSON은 칸별로 stripCitations()를 따로 부른다.
+    // JSON을 깨뜨린다. JSON은 칸별로 stripCitations()를 따로 부른다.
     static ResponsesOutput parseResponses(JsonNode root, boolean stripCitations) {
         StringBuilder text = new StringBuilder();
         int searches = 0;
@@ -602,7 +595,7 @@ public class OpenAiResponsesClient {
                 krw(usd), Math.round(properties.getUsdKrw()));
     }
 
-    // 소수 둘째 자리까지 — 루나 채팅 한 턴은 1원이 안 돼서 정수로 반올림하면 전부 0원으로 찍힌다.
+    // 소수 둘째 자리까지 — 채팅 한 턴은 1원이 안 될 수 있어 정수로 반올림하면 0원으로 찍힌다.
     private String krw(double usd) {
         return String.format("%.2f", usd * properties.getUsdKrw());
     }

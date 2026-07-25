@@ -23,11 +23,11 @@ import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-// Anthropic Messages API 호출 — 정밀 판독 실험(LLM_READING_PROVIDER=anthropic)과
+// Anthropic Messages API 호출 — 정밀 판독(LLM_READING_PROVIDER=anthropic)과
 // 탐색 채팅(LLM_ANTHROPIC_CHAT_MODEL) 두 경로. 모델, 상한, 추론 세기만 호출마다 다르다.
 //
 // 스트리밍으로 받는다. 판독은 출력이 크고 thinking까지 얹혀 한 번에 다 받으면 응답이
-// 도착하기 전에 클라이언트가 먼저 끊는다(실측: 180초 타임아웃). 스트림은 헤더가 즉시
+// 도착하기 전에 클라이언트가 먼저 끊는다. 스트림은 헤더가 즉시
 // 오고 본문이 흘러 들어와, 오래 걸리는 판독과 정말 끊긴 연결이 구분된다.
 @Slf4j
 @Component
@@ -334,7 +334,7 @@ public class AnthropicMessagesClient {
         tokens[3] = Math.max(tokens[3], usage.path("output_tokens").asLong(0));
     }
 
-    // 호출당 실제 토큰과 추정 비용을 남긴다 — "실제 얼마 나가는지"는 이 실측 로그와 콘솔 청구서로 본다.
+    // 호출당 실제 토큰과 추정 비용을 남긴다 — "실제 얼마 나가는지"는 이 로그와 콘솔 청구서로 본다.
     private void logUsage(Call call, long[] tokens) {
         double[] price = properties.effectivePrices(call.model());
         // 표의 캐시생성 단가는 5분 기준(입력의 1.25배). 1시간 캐시는 입력의 2배다.
@@ -346,7 +346,7 @@ public class AnthropicMessagesClient {
                     call.kind(), call.model(), tokens[0], tokens[1], tokens[2], tokens[3]);
             return;
         }
-        // 기존 제미니 경로가 같은 이름을 summary로 쓴다 — 타입이 다르면 등록이 거부된다(실측 경고).
+        // Google 경로가 같은 이름을 summary로 쓴다 — 타입이 다르면 등록이 거부된다.
         Metrics.summary("llm.cost.usd", "provider", "anthropic",
                 "kind", "채팅".equals(call.kind()) ? "chat" : "reading").record(usd);
         log.info("anthropic[{} {}] 토큰: 신규입력 {} / 캐시읽기 {} / 캐시생성 {} / 출력+추론 {} — 비용 약 {}원 (정가 기준, 환율 {})",

@@ -69,10 +69,8 @@ abstract class GoogleGenerateContentClient implements LlmClient {
 
     abstract String thinkingLevel();
 
-    // 채팅 temperature. 명시하지 않으면 API 기본값(1.0)으로 도는데, 그 온도에서는 금지 규칙
-    // 이탈이 매 토큰마다 조금씩 붙어 답변이 길수록 누적된다(실측: 규칙이 있는데도 노컨택
-    // 템플릿과 판정 반복이 재발). 분석은 0(같은 사실에 같은 점수)이고, 채팅은 말투가 굳지
-    // 않을 만큼만 낮춘다. 0으로 내리면 관용구 재사용이 늘어 매 대화가 같은 문장으로 시작한다.
+    // 채팅 temperature. 분석은 같은 입력에 같은 결과가 나오게 0으로 고정하고,
+    // 채팅은 말투가 굳지 않을 만큼만 기본값(1.0)보다 낮춘다.
     abstract double temperature();
 
     // 분석(deep) 전용 thinking 세기 — 채팅(low)과 분리. 2.5 계열은 예산 숫자(-1=동적), 3.x는 단계.
@@ -91,8 +89,7 @@ abstract class GoogleGenerateContentClient implements LlmClient {
     // 로그 라벨용
     abstract String providerName();
 
-    // 토큰 로그의 용도 라벨 — 메시지 한 번에 채팅(1만대)과 추출(1천대) 호출이 연달아 찍혀
-    // "왜 토큰이 널뛰냐"는 혼동이 반복됐다(실측). 호출 종류로 라벨을 구분한다.
+    // 토큰 로그의 용도 라벨. 메시지 한 번에 채팅과 추출 호출이 연달아 찍혀서 호출 종류로 구분한다.
     private static final String KIND_CHAT = "채팅";
     private static final String KIND_EXTRACT = "추출";
     private static final String KIND_DEEP = "분석";
@@ -143,7 +140,7 @@ abstract class GoogleGenerateContentClient implements LlmClient {
                         .thenApply(response -> extractText(response, kind)));
     }
 
-    // 503은 피크 시간대의 일상이라(실측) 짧게 기다렸다 1회 재시도한다.
+    // 503은 피크 시간대의 일상이라 짧게 기다렸다 1회 재시도한다.
     // 429(한도 소진)나 4xx는 다시 보내도 같은 결과라 재시도하지 않는다.
     private CompletableFuture<HttpResponse<String>> retryOnceIfOverloaded(HttpResponse<String> response) {
         if (response.statusCode() != 503) {
@@ -160,7 +157,7 @@ abstract class GoogleGenerateContentClient implements LlmClient {
     }
 
     // 안전성 필터 해제(BLOCK_NONE): 이별 상담 도메인은 불륜, 환승, 이별 통보 같은 무거운 소재가
-    // 일상 입력인데, 기본 임계값에서는 생성이 도중에 차단돼 JSON이 잘리는 실측이 있었다(분석 파싱 실패).
+    // 일상 입력인데, 기본 임계값에서는 생성이 도중에 차단돼 JSON이 잘린다.
     // 상담 응답의 수위는 필터가 아니라 페르소나와 루브릭이 관리한다. 그래도 잘리면
     // finishReason=SAFETY 경고 로그로 드러난다(일부 카테고리는 BLOCK_NONE에서도 강제 차단이 남는다).
     private static final List<Map<String, String>> SAFETY_SETTINGS = List.of(
@@ -175,7 +172,6 @@ abstract class GoogleGenerateContentClient implements LlmClient {
         // system은 system_instruction으로, 대화는 contents(user/model)로 나눠 받는다.
         // 단 '대화보다 뒤에 온 system 메시지'는 예외다 — 그건 대화 뒤에 놓이길 의도하고 넣은 것이라
         // (출력 직전 점검), system_instruction으로 접으면 대화 앞으로 가버려 의도가 정반대가 된다.
-        // 실측: 맨 끝에 두려고 만든 점검이 실제로는 대화 20개 앞에 놓여 있었고 그래서 절반만 먹혔다.
         StringBuilder system = new StringBuilder();
         List<Map<String, Object>> contents = new ArrayList<>();
         for (ChatMessage message : messages) {
@@ -211,14 +207,14 @@ abstract class GoogleGenerateContentClient implements LlmClient {
             generationConfig.put("responseMimeType", "application/json");
         }
         // responseMimeType은 "JSON으로 답해달라"는 지시일 뿐이라 모델이 중간에 멈추면 그대로 잘린 JSON이 온다
-        // (실측: finishReason=STOP인데 본문 미완결). 스키마를 주면 생성 단계에서 문법에 맞지 않는 토큰이
+        // (finishReason=STOP인데도 본문 미완결). 스키마를 주면 생성 단계에서 문법에 맞지 않는 토큰이
         // 후보에서 제외돼 미완결, 필드 오타, 범위 밖 enum이 구조적으로 나올 수 없다.
         if (json && responseSchema != null) {
             generationConfig.put("responseSchema", responseSchema);
         }
         if (deep) {
             generationConfig.put("temperature", 0);
-            // 분석은 유형 게이트 → 요인 5슬롯 → 출력 직전 점검의 다단 절차라 thinking을 명시한다.
+            // 분석은 여러 단계를 거치는 긴 추론이라 thinking을 명시한다.
             // 판별은 분석이 실제로 때리는 deep 엔드포인트의 모델명으로(분석 전용 모델이 다를 수 있다).
             if (deepEndpoint().contains("gemini-2.5")) {
                 if (assessmentThinkingBudget() >= 0) {
@@ -240,17 +236,15 @@ abstract class GoogleGenerateContentClient implements LlmClient {
         } else {
             generationConfig.put("temperature", temperature());
             if (endpoint().contains("gemini-2.5")) {
-                // 답을 짓는 것과 그 초안을 출력 직전 점검으로 되짚는 것을 한 예산 안에서 해야 한다 —
-                // 점검이 실제로 돌 여지가 없으면 규칙을 맨 끝으로 옮긴 의미가 없다(실측: 512에선 그냥 통과했다).
+                // 답을 짓는 것과 출력 직전 점검으로 되짚는 것이 한 예산 안에 들어가야 한다.
                 generationConfig.put("thinkingConfig", Map.of("thinkingBudget", thinkingBudget()));
             } else {
                 generationConfig.put("thinkingConfig", Map.of("thinkingLevel", thinkingLevel()));
             }
         }
         body.put("generationConfig", generationConfig);
-        // 무엇이 실제로 실려 나가는지 남긴다 — thinking 제어 필드는 문법이 안 맞으면 조용히
-        // 무시돼서, 설정을 올렸는데 추론량이 안 변하는 일이 반복됐다(실측). 프롬프트와 키는
-        // 안 찍고 generationConfig만 찍는다(개인정보 없음, 몇 십 바이트).
+        // 무엇이 실제로 실려 나가는지 남긴다 — thinking 제어 필드는 문법이 안 맞으면 조용히 무시된다.
+        // 프롬프트와 키는 안 찍고 generationConfig만 찍는다(개인정보 없음, 몇 십 바이트).
         log.info("{} {} 생성 설정: {}", providerName(), tierLabel(tier), generationConfig);
 
         try {
@@ -296,7 +290,7 @@ abstract class GoogleGenerateContentClient implements LlmClient {
             JsonNode root = objectMapper.readTree(body);
             logUsage(root, kind);
             JsonNode candidate = root.path("candidates").path(0);
-            // 생성이 왜 멈췄는지 반드시 남긴다 — JSON이 중간에 잘려 파싱이 깨질 때(실측)
+            // 생성이 왜 멈췄는지 반드시 남긴다 — JSON이 중간에 잘려 파싱이 깨질 때
             // MAX_TOKENS(출력 잘림)인지 SAFETY(안전성 차단)인지 이 값 없이는 추적이 불가능하다.
             String finishReason = candidate.path("finishReason").asText("");
             if (!finishReason.isEmpty() && !"STOP".equals(finishReason)) {
@@ -346,7 +340,7 @@ abstract class GoogleGenerateContentClient implements LlmClient {
         return body.length() <= LOG_BODY_LIMIT ? body : body.substring(0, LOG_BODY_LIMIT) + "...(truncated)";
     }
 
-    // 호출당 실제 토큰량을 남긴다 — 비용 검증(프롬프트 창 크기, 추출 호출 비용)은 추정이 아니라 이 실측으로 한다.
+    // 호출당 실제 토큰량을 남긴다 — 비용 검증(프롬프트 창 크기, 추출 호출 비용)은 추정이 아니라 이 값으로 한다.
     private void logUsage(JsonNode root, String kind) {
         JsonNode usage = root.path("usageMetadata");
         if (usage.isMissingNode()) {
@@ -355,9 +349,8 @@ abstract class GoogleGenerateContentClient implements LlmClient {
         int total = usage.path("totalTokenCount").asInt(0);
         int input = usage.path("promptTokenCount").asInt(0);
         // 캐시 적중 토큰. input에 포함된 값이라 따로 빼서 봐야 "얼마가 할인가로 나갔는지"가 보인다.
-        // 캐시 단가는 입력의 10%라(3.1 Pro 기준 $2.00 → $0.20) 이 비율이 곧 비용 구조다.
-        // 루브릭, 페르소나가 프롬프트 맨 앞에 있어 암묵적 캐싱 조건은 이미 갖춰져 있는데,
-        // 실제로 맞고 있는지는 이 값 없이 알 수 없어 명시적 캐싱 도입 판단이 불가능했다.
+        // 캐시 단가는 입력의 10%라 이 비율이 곧 비용 구조다. 고정 블록을 프롬프트 맨 앞에 둬
+        // 암묵적 캐싱을 노리는데, 실제로 맞는지는 이 값으로만 확인된다.
         int cached = usage.path("cachedContentTokenCount").asInt(0);
         // thoughts(추론) 토큰을 따로 남긴다 — output이 작게 잘렸을 때 추론이 예산을 먹었는지 가려낸다.
         // 설정값이 아니라 응답이 알려주는 실제 모델을 남긴다 — 모델을 바꿔가며 비교할 때
@@ -382,7 +375,7 @@ abstract class GoogleGenerateContentClient implements LlmClient {
             // 누적 지출과 호출당 분포를 함께 본다(합계만 보면 어떤 종류가 비싼지 안 갈린다).
             Metrics.summary("llm.cost.usd", "provider", providerName(), "kind", kind).record(cost);
         }
-        // 토큰 총량 분포 — 프롬프트 창, 추출 호출이 비용에 미치는 영향을 실측으로 집계한다.
+        // 토큰 총량 분포 — 프롬프트 창, 추출 호출이 비용에 미치는 영향을 집계한다.
         Metrics.summary("llm.tokens.total", "provider", providerName()).record(total);
         // 캐시 적중률은 호출 종류마다 다르다(채팅은 연속 호출이라 잘 맞고, 분석은 띄엄띄엄해서 불리).
         // 종류별로 갈라 집계해야 어느 쪽에 명시적 캐싱이 필요한지가 갈린다.

@@ -3,7 +3,7 @@ package com.threeam.assessment.dto;
 import com.threeam.assessment.dto.ReunionDiagnosis.TimeInsight;
 import java.util.List;
 
-// 정밀 판독의 산출물 — v11.4 계약(지시 전문은 로컬 reading.yml, 출력 형식과 1:1).
+// 정밀 판독의 산출물 — 출력 형식은 로컬 reading.yml과 1:1.
 // 진단 문장(summary, diagnosis, timeInsight)은 판독이 쓰지 않는다: 1호출이 확정한 것을
 // 서버가 그대로 병합한다(2호출이 다시 해석하거나 고쳐 쓸 기회를 없앤다).
 // 판독이 실제로 쓰는 것은 심층 장(analysisChapters)과 뒤늦은 후회 마크, 행동 계획, 후속 칩이다.
@@ -32,13 +32,9 @@ public record ReadingDraft(
     // 뒤다(서문을 본문 뒤에 쓰는 원리). prologue(통짜)와 empathy/reality(2필드)는 블록
     // 구조 이전 저장분의 자리 — 새 생성은 채우지 않지만 옛 리포트 표시를 위해 남긴다.
     // mind(통짜 문자열)는 블록 구조 이전 저장분의 자리 — 새 생성은 mindBlocks만 채운다.
-    // 한 문자열 필드는 편집이 모든 내용을 한 문단에 밀어 넣게 만든다(실측) — 분석 장과
-    // 같은 소제목 블록으로 쪼갠다.
-    // verdictBlocks는 재회 가능성 논증 카드 — 소제목이 판정 결론 문장(충동이었지 마음이
-    // 떠난 게 아니다 류), 본문이 그 판정이 가능성을 왜 움직이는지, direction이 올림(UP)/
-    // 내림(DOWN). 라벨+한 줄 카드(reasons)가 논증을 명패로 해체해 얕아지던 문제의
-    // 교체품이다. reasons는 카드 세대 저장분 표시용으로 남긴다.
-    // readingBlocks는 소견서 판형(2026-09-07)의 1장 본문 — 분석 문단 전부를 원문 순서대로,
+    // verdictBlocks는 재회 가능성 논증 카드 — 소제목이 판정 결론, 본문이 그 판정이 가능성을
+    // 왜 움직이는지, direction이 올림(UP)/내림(DOWN). reasons는 그 이전 저장분 표시용으로 남긴다.
+    // readingBlocks는 소견서 판형의 1장 본문 — 분석 문단 전부를 원문 순서대로,
     // 판을 가른 문단에만 direction(UP/DOWN/NONE)이 붙는다. 카드를 오려내지 않고 제자리에
     // 표시만 하려는 자리라 prologueBlocks(카드 뺀 나머지)와 verdictBlocks(카드)를 대신한다.
     // 옛 저장분은 null이라 화면이 이전 판형으로 그린다.
@@ -51,10 +47,10 @@ public record ReadingDraft(
                            List<Reason> reasons, List<Answer> answers,
                            List<ReadingBlock> readingBlocks, Summary summary) {
 
-        // 게이지 아래 정리표(2026-09-08) — 분류 호출(luna)이 완성된 분석에서 뽑는다. name은 이
+        // 게이지 아래 정리표 — 분류 호출이 완성된 분석에서 뽑는다. name은 이
         // 이별을 부르는 한 줄, up/down은 가능성을 올리고 내리는 것의 키워드, why는 지금 이
         // 등급인 이유 한 문장. 분석 호출은 이걸 모른다(재회 정리를 향해 쓰이지 않게). 옛 저장분은 null.
-        // types는 이 사연에 겹친 이별의 유형 한 줄씩(76판 [유형 비교]). 옛 저장분은 null.
+        // types는 이 사연에 겹친 이별의 유형 한 줄씩. 옛 저장분은 null.
         // boundary는 한 칸 더는 아닌 이유(낮음이면 왜 매우 낮음은 아닌지) — 총평과 따로 카드로 그린다. 옛 저장분은 null.
         public record Summary(String name, List<Item> up, List<Item> down, String why, List<String> types,
                               String boundary) {
@@ -69,7 +65,7 @@ public record ReadingDraft(
             // 키워드와 그 판단이 들어 있는 문단 번호(1-based, 분류 호출의 번호). 번호가 잡히면
             // 그 문단의 ReadingBlock.keyword에 같은 키워드가 붙어 카드와 본문이 서로를 가리킨다.
             // note는 그 이름이 왜 올리는지 또는 내리는지 한 줄 — 카드만 읽어도 무엇이 왜인지 알게.
-            // pivot은 등급을 만든 판단 표시 — sol이 항목 이름 뒤에 (핵심)을 붙인 것. 화면이 맨 위로 올리고 표시한다.
+            // pivot은 등급을 만든 판단 표시 — 항목 이름 뒤에 (핵심)이 붙은 것. 화면이 맨 위로 올리고 표시한다.
             public record Item(String keyword, Integer para, String note, boolean pivot) {
                 public Item(String keyword, Integer para, String note) {
                     this(keyword, para, note, false);
@@ -82,9 +78,9 @@ public record ReadingDraft(
         public record VerdictCard(String subtitle, String body, String direction, Boolean pivot) {
         }
 
-        // 소견서 문단 하나. subtitle은 그 문단이 대목의 첫 문단일 때만 sol의 소제목,
+        // 소견서 문단 하나. subtitle은 그 문단이 대목의 첫 문단일 때만 소제목,
         // direction은 판을 가른 문단에만(UP/DOWN/NONE, 없으면 null), pivot은 그 문단이
-        // 등급을 만든 대목(sol이 소제목에 (핵심)을 붙인 대목)에 속하는지.
+        // 등급을 만든 대목(소제목에 (핵심)이 붙은 대목)에 속하는지.
         // keyword는 정리표의 올리는 것/내리는 것 중 이 문단에서 온 것 — 화면이 방향 문구 대신
         // 이 말을 라벨로 쓰고, 위 카드가 이 문단을 가리킨다. 없으면 null.
         public record ReadingBlock(String subtitle, String body, String direction, Boolean pivot,
@@ -117,7 +113,7 @@ public record ReadingDraft(
     // 처방(복구 조건)은 넣지 않는다: 이해할 자리에서 숙제를 받으면 행동 계획과 겹친다.
     // claimSignature는 그 장이 세운 주장을 한 줄로 압축한 내부 값이다. 화면에 안 나간다.
     // 겹치는 것은 태그가 아니라 주장이라 role 중복 검사로는 못 잡는다 — 질문 셋이 달라도
-    // 주장이 하나면 같은 말을 세 번 하는 리포트가 된다(실측).
+    // 주장이 하나면 같은 말을 세 번 하는 리포트가 된다.
     public record Chapter(String question, String verdict, String reading, String role,
                           String claimSignature, String interpretationId,
                           List<String> evidenceIds) {

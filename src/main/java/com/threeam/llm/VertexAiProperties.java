@@ -57,13 +57,11 @@ public class VertexAiProperties {
     private long assessmentTimeoutSeconds = 90;
 
     // thinking 세기. 제어 필드가 세대마다 달라 둘을 따로 둔다 — 2.5 계열은 토큰 예산(thinkingBudget),
-    // 3.x는 단계(thinkingLevel). 모델을 바꿀 때 코드를 안 고쳐도 되게 설정으로 뺐다:
-    // 전에는 2.5가 아니면 무조건 low로 떨어져서, 더 강한 모델로 갈아타는 순간 추론만 낮아졌다.
+    // 3.x는 단계(thinkingLevel). 모델을 바꿀 때 코드를 안 고쳐도 되게 설정으로 뺐다.
     private int thinkingBudget = 2048;
     private String thinkingLevel = "low";
 
-    // 채팅 temperature. 명시하지 않으면 API 기본(1.0)이라 금지 규칙 이탈이 답변 길이에 비례해
-    // 누적됐다(실측). 분석은 0으로 못 박혀 있고, 채팅은 말투가 굳지 않을 만큼만 낮춘다.
+    // 채팅 temperature. 분석은 0으로 고정이고, 채팅은 말투가 굳지 않을 만큼만 기본값(1.0)보다 낮춘다.
     private double temperature = 0.7;
 
     // 분석(deep) 전용 thinking. 2.5 계열은 -1이 동적(모델 재량), 3.x는 high 고정.

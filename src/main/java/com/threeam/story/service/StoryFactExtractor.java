@@ -143,7 +143,7 @@ public class StoryFactExtractor {
     // 파싱 실패는 호출부의 exceptionally가 받는다(로그만 남기고 무시).
     private Extraction parse(String json) {
         try {
-            // 코드펜스, 잡설이 붙은 응답을 한 번 다듬어 살린다(파싱 실패 실측 대응).
+            // 코드펜스, 잡설이 붙은 응답을 한 번 다듬어 살린다.
             JsonNode root = objectMapper.readTree(LlmJson.salvage(json));
             List<String> newFacts = new ArrayList<>();
             for (JsonNode node : root.path("newFacts")) {

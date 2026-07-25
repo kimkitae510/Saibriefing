@@ -118,8 +118,8 @@ class TypeBandScorerTest {
         assertThat(married).isEqualTo(5); // pull 1.0 — 사유가 남지 않는다
     }
 
-    // 차단 한 건이 점프를 발동시키고 상대신호와 접점과 통보온도에서 또 세어지던 실측.
-    // 겹친 감점이 대역을 관통해 절대 하한 3에 박혔다 — 상대가 결혼한 판과 같은 자리다.
+    // 차단 한 건이 점프를 발동시키고 상대신호와 접점과 통보온도에서 또 세어지면,
+    // 겹친 감점이 대역을 관통해 절대 하한 3에 박힌다 — 상대가 결혼한 판과 같은 자리다.
     @Test
     @DisplayName("하향 점프는 요인이 대역 하한을 뚫고 내려가는 것을 막는다")
     void downwardJumpGivesNoFloorRoom() {

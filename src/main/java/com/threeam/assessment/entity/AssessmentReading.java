@@ -15,7 +15,7 @@ import org.hibernate.annotations.CreationTimestamp;
 // 본문(body)은 스토리북 산출물(ReadingDraft) JSON 통짜다 — 리포트 구조가 빠르게 바뀌는 중이라
 // 컬럼으로 파면 개편마다 DDL이 따라붙는다. 표시 전용이라 쿼리할 일도 없다.
 // state 4개는 컬럼으로 뽑다가 걷어냈다(DROP 완료) — 쓰기만 하고 읽는 곳이 없었다.
-// 값 자체는 body JSON 안에 그대로 남아 있어 골든셋 회귀에 필요하면 거기서 읽으면 된다.
+// 값 자체는 body JSON 안에 그대로 남아 있어 회귀 비교에 필요하면 거기서 읽으면 된다.
 @Entity
 @Table(name = "assessment_reading")
 @Getter

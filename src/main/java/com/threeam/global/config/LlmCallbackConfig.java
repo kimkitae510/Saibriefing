@@ -11,7 +11,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 // 전에는 thenAccept, handle을 executor 없이 써서 이 작업들이 HttpClient 내부 스레드에서 실행됐다.
 // 톰캣 스레드는 안 잡으니 요청 처리엔 문제가 없었지만, DB 쓰기와 커넥션 획득이 우리가 만들지도
 // 모니터링하지도 않는 풀에서 일어난다는 게 문제였다 — DB가 느려지면 지연이 거기 쌓이고,
-// 커넥션 풀이 마르면 HTTP 응답 처리 스레드가 같이 묶인다(LLM 호출 자체가 밀린다).
+// 커넥션 풀이 마르면 공용 풀이 같이 묶여 다른 LLM 응답 처리까지 밀린다.
 // 후속 작업을 우리 풀로 분리하면 그 전파가 끊기고, 큐 길이와 스레드 수가 지표로 드러난다.
 @Slf4j
 @Configuration

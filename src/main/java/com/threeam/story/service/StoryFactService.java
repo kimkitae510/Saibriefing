@@ -87,7 +87,7 @@ public class StoryFactService {
 
     // 번복(정정) 기록은 중복 제거 없이 매번 새 줄로 남긴다 — 같은 문장이라도 각각 별개의 사건이다.
     // appendFacts를 타면 두 번째 번복부터 건너뛰어져 정정이 옛 위치에 머물고, 그 뒤에 쌓인
-    // "사귀는 중" 류 사실들에게 시간순으로 밀려 정정이 영구히 무력화된다(분석↔번복 루프 실측).
+    // "사귀는 중" 류 사실들에게 시간순으로 밀려 정정이 영구히 무력화된다.
     @Transactional
     public void appendCorrection(Long storyId, String fact) {
         storyFactRepository.save(StoryFact.of(storyId, fact, null));

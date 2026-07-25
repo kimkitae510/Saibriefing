@@ -5,7 +5,7 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 // 사용량 설정. 잔여 회수는 전부 이용권(entitlements) 하나로 관리한다 — 일일 무료 쿼터는
-// 폐지됐다(유저당 월 원가가 1만원을 넘어 지속 불가, 2026-05 실비 실측). 무료로 주는 것도
+// 원가가 감당되지 않아 폐지했다. 무료로 주는 것도
 // 이용권으로 지급하므로, 나중에 이벤트나 재방문 선물을 붙일 때도 지급 한 줄이면 된다.
 @Getter
 @Setter

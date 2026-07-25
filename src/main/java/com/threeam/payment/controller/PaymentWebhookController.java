@@ -74,7 +74,7 @@ public class PaymentWebhookController {
         if (orderId == null || orderId.isBlank()) {
             // 환불 확정은 거래가 아니라 조정(adjustment) 이벤트로 온다. 조정에는 custom_data가
             // 없고 거래 id만 실려 있어, 그 id로 우리 주문을 찾는다 — 이 경로가 없으면
-            // 대시보드에서 환불해도 서버가 몰라 이용권이 회수되지 않는다(실측으로 확인).
+            // 대시보드에서 환불해도 서버가 몰라 이용권이 회수되지 않는다.
             String transactionId = payload.path("data").path("transaction_id").asText(null);
             if (transactionId != null && !transactionId.isBlank()) {
                 orderId = paymentService.orderIdByPaymentKey(transactionId).orElse(null);

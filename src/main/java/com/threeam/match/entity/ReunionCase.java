@@ -38,7 +38,7 @@ public class ReunionCase {
     private String tone;
     private Boolean repeatBreakup;
     // 상대에게 새 사람이 있었는가. 이 축이 없으면 새 연인이 눈앞에 있는 사연에
-    // 그런 장벽이 없던 사례가 올라온다 — 사유는 같아도 판이 다르다(실측).
+    // 그런 장벽이 없던 사례가 올라온다 — 사유는 같아도 판이 다르다.
     private Boolean partnerHasNew;
     private String sourceType;
 

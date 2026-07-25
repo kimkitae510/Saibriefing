@@ -31,8 +31,7 @@ public interface LlmClient {
     }
 
     // responseSchema를 함께 넘기는 정밀 판단 호출. 프롬프트로 JSON을 "부탁"하는 것과 달리,
-    // 스키마는 생성 단계에서 문법을 강제해 잘린 JSON, 오타난 필드, 범위 밖 enum이 아예 나올 수 없게 한다
-    // (실측: 프롬프트 지시만으로는 finishReason=STOP인데 본문이 중간에 끊기는 실패가 반복).
+    // 스키마는 생성 단계에서 문법을 강제해 잘린 JSON, 오타난 필드, 범위 밖 enum이 아예 나올 수 없게 한다.
     // 스키마 표현은 벤더 형식(Google의 OpenAPI 서브셋)이라 구현체가 해석한다. null이면 지시 없이 호출.
     default CompletableFuture<String> generateJsonDeep(List<ChatMessage> messages,
                                                        Map<String, Object> responseSchema) {

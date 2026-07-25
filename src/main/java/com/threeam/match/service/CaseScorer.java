@@ -17,7 +17,7 @@ public class CaseScorer {
     // 부는 밑에 깔린 요인이라, 주끼리 맞는 것과 부끼리 스치는 것은 같은 사건이 아니다.
     private static final int PRIMARY_BOTH = 50;      // 방아쇠가 같음
     // 대상 없는 범용 태그(거짓말신뢰 등)의 방아쇠 일치는 낮게 센다 — 무엇을 숨겼는지가
-    // 태그에 없어서, 코인 은닉과 랜챗 은닉이 같은 방아쇠로 잡혔다(실측). 소재를 특정하는
+    // 태그에 없어서 서로 다른 사건이 같은 방아쇠로 잡힌다. 소재를 특정하는
     // 구체 태그가 승부를 가르게 하는 게 목적이다.
     private static final int PRIMARY_BOTH_GENERIC = 30;
     // 절반(25)으로 두면 엇갈린 겹침 두 개가 방아쇠 일치 하나와 동점이 된다 — 겹친 태그 수가
@@ -38,7 +38,7 @@ public class CaseScorer {
 
     // T3 상황 — 지금 어떤 상태인가
     // 연락 상태는 실패 사례에서만 점수가 된다. 재회한 사례는 결과가 곧 연락중이라 값이
-    // 전부 같고(성공 191건 전량), 그 축으로 성공 사례끼리 가릴 게 없다. 그런데도 채점하면
+    // 전부 같고, 그 축으로 성공 사례끼리 가릴 게 없다. 그런데도 채점하면
     // 무연락, 차단인 유저에게 모든 성공 사례가 12점씩 밀려 나가는 편향만 남는다.
     private static final int CONTACT_STATE = 12;
     private static final int REPEAT_BREAKUP = 8;
@@ -57,9 +57,8 @@ public class CaseScorer {
 
     public int score(StoryMatchProfile profile, ReunionCase target) {
         // 방향 게이트: 통보 주체나 과실이 '나'와 '상대'로 명시 반대인 사례는 태그가 아무리
-        // 겹쳐도 남의 이야기다(실측: 유저가 마음이 식어 찬 사연에 "상대가 식어서 나를 찼다"
-        // 사례가 최상위로 매칭됨 — 같은 애정식음이어도 겪는 자리가 반대면 공감이 아니라 오독을
-        // 만든다). 합의, 미상, 양쪽, 없음은 반대가 아니므로 게이트에 안 걸린다.
+        // 겹쳐도 남의 이야기다 — 같은 사유여도 겪는 자리가 반대면 공감이 아니라 오독을 만든다.
+        // 합의, 미상, 양쪽, 없음은 반대가 아니므로 게이트에 안 걸린다.
         if (opposed(profile.getDumper(), target.getDumper())
                 || opposed(profile.getFault(), target.getFault())) {
             return 0;

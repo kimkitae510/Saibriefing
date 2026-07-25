@@ -20,12 +20,11 @@ public class MockLlmClient implements LlmClient {
                         + "(개발용 임시 응답 — 실제 LLM 연동 전 고정 메시지입니다.)");
     }
 
-    // 정밀 판독 호출만 갈라 고정 응답을 돌려준다 — 리포트 화면과 저장 흐름을
-    // 키, 비용 없이 검증하기 위한 분기. 2단 파이프라인은 프롬프트 문구로 단을 가린다.
+    // 판정 호출만 갈라 고정 응답을 돌려준다 — 결과 화면과 저장 흐름을 키, 비용 없이 검증하기 위한 분기.
     @Override
     public CompletableFuture<String> generateJsonDeep(List<ChatMessage> messages,
                                                       Map<String, Object> responseSchema) {
-        // 재회 판독(B)은 유저 차례가 사연뿐이라 문구로 못 가린다 — 스키마 동일성으로 가린다.
+        // 두 번째 병렬 호출(B)은 유저 차례가 사연뿐이라 문구로 못 가린다 — 스키마 동일성으로 가린다.
         if (responseSchema == ReadingLlm.JUDGEMENT_SCHEMA) {
             return CompletableFuture.completedFuture("""
                     {"name": "(개발용 임시) 조율 없이 쌓인 피로가 만든 이별",

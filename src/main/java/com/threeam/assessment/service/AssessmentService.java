@@ -71,7 +71,7 @@ public class AssessmentService {
             return new Preflight(context, insufficientGuide(storyId, NO_BASIS_GUIDE));
         }
         // 실패 재시도 가드: 실패는 후차감(미차감)이라, 같은 재료가 계속 같은 이유(안전성 차단,
-        // 응답 잘림 등)로 실패하면 무한 무료 LLM 호출 루프가 된다(실측). 연속 2회부터 LLM 없이 거부.
+        // 응답 잘림 등)로 실패하면 무한 무료 LLM 호출 루프가 된다. 연속 2회부터 LLM 없이 거부.
         int retryAfterSeconds = txService.assessFailRetryBlockedSeconds(storyId);
         if (retryAfterSeconds > 0) {
             // 남은 초를 함께 내려 화면이 "잠시 뒤"가 아니라 실제 카운트다운을 보여주게 한다.
@@ -174,9 +174,8 @@ public class AssessmentService {
         }
         ReadingDraft.Decision d = report.decision();
         // 새 구조는 판정 카드(verdictBlocks)가 본체고 mind와 분석 장은 카드가 흡수해
-        // 빌 수 있다 — mind를 필수로 걸면 새 판독 전부가 "구조 불일치"로 버려진다
-        // (실측: 저장은 되는데 응답에서 탈락해 실패 화면으로 보였다). 전 필드 null
-        // 껍데기(구조 개편 전 행)만 거르면 된다.
+        // 빌 수 있다 — mind를 필수로 걸면 새 판독 전부가 "구조 불일치"로 버려진다.
+        // 전 필드 null 껍데기(구조 개편 전 행)만 거르면 된다.
         boolean hasCards = d.verdictBlocks() != null && !d.verdictBlocks().isEmpty();
         boolean hasBody = (d.prologueBlocks() != null && !d.prologueBlocks().isEmpty())
                 || (report.analysisChapters() != null && !report.analysisChapters().isEmpty());
@@ -230,7 +229,7 @@ public class AssessmentService {
     // 옛 행 하나 때문에 이력 조회 전체가 500이 되면 안 된다.
     // 성공해도 내용을 확인한다: 스프링의 ObjectMapper는 모르는 필드를 에러 없이
     // 무시하므로, 구조 개편 전 본문이 전 필드 null인 껍데기로 조용히 통과한다.
-    // 그 껍데기가 화면에 내려가면 뷰어가 렌더 중에 터진다(실측: 빈 화면).
+    // 그 껍데기가 화면에 내려가면 뷰어가 렌더 중에 터진다.
     private void attachReading(AssessmentResponse response, Assessment a, AssessmentReading reading,
                                Assessment base) {
         try {
